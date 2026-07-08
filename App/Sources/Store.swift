@@ -58,6 +58,7 @@ final class Store {
         for i in sessions.indices where sessions[i].status == .processing {
             sessions[i].status = .recorded
         }
+        recoverInterruptedRecordings()
     }
 
     func load() {
@@ -118,5 +119,78 @@ final class Store {
     var enrollments: [VoiceEnrollment] {
         guard let emb = myVoiceEmbedding else { return [] }
         return [VoiceEnrollment(name: myName, embedding: emb)]
+    }
+
+    // MARK: - In-progress recording (crash recovery)
+
+    /// Metadata written when a recording starts, so a crash mid-recording can
+    /// be reconstructed into a session on next launch.
+    struct RecordingSidecar: Codable {
+        var personId: UUID
+        var title: String
+        var date: Date
+    }
+
+    func inProgressAudioURL(id: UUID) -> URL {
+        Self.audioDirURL.appendingPathComponent("\(id.uuidString).recording.wav")
+    }
+
+    private func sidecarURL(id: UUID) -> URL {
+        Self.audioDirURL.appendingPathComponent("\(id.uuidString).recording.json")
+    }
+
+    func beginRecording(id: UUID, person: Person) throws -> URL {
+        let sidecar = RecordingSidecar(
+            personId: person.id,
+            title: "1-on-1 with \(person.name)",
+            date: Date()
+        )
+        try JSONEncoder().encode(sidecar).write(to: sidecarURL(id: id))
+        return inProgressAudioURL(id: id)
+    }
+
+    /// Clean stop: promote the in-progress file to a real session.
+    func finishRecording(id: UUID, duration: Double) throws -> SessionRecord {
+        let sidecar = try JSONDecoder().decode(
+            RecordingSidecar.self, from: Data(contentsOf: sidecarURL(id: id)))
+        var session = SessionRecord(
+            personId: sidecar.personId,
+            title: sidecar.title,
+            date: sidecar.date,
+            duration: duration
+        )
+        session.id = id
+        try FileManager.default.moveItem(
+            at: inProgressAudioURL(id: id), to: audioURL(for: session))
+        try? FileManager.default.removeItem(at: sidecarURL(id: id))
+        addSession(session)
+        return session
+    }
+
+    func discardRecording(id: UUID) {
+        try? FileManager.default.removeItem(at: inProgressAudioURL(id: id))
+        try? FileManager.default.removeItem(at: sidecarURL(id: id))
+    }
+
+    /// Turn recordings orphaned by a crash into normal sessions.
+    private func recoverInterruptedRecordings() {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: Self.audioDirURL, includingPropertiesForKeys: nil)) ?? []
+        for url in files where url.lastPathComponent.hasSuffix(".recording.wav") {
+            let base = url.lastPathComponent.replacingOccurrences(of: ".recording.wav", with: "")
+            guard let id = UUID(uuidString: base) else { continue }
+            do {
+                // The writer died before finalize; rebuild the header from file size.
+                let duration = try WAVFile.repairHeader(
+                    url: url, sampleRate: MeetingPipeline.sampleRate)
+                guard duration > 1 else {
+                    discardRecording(id: id)
+                    continue
+                }
+                _ = try finishRecording(id: id, duration: duration)
+            } catch {
+                // Leave the files in place; a future launch may succeed.
+            }
+        }
     }
 }

@@ -1,97 +1,137 @@
 import SwiftUI
 import SitdownKit
 
-/// Full-screen recording UI. Saves the WAV and kicks off processing on stop.
+/// Full-screen recording UI with live caption preview.
+///
+/// Audio streams to disk while recording (crash-safe: an app death mid-meeting
+/// is recovered into a session on next launch). Live captions are a
+/// best-effort preview; speaker labels appear in the final diarized pass.
 struct RecordSheetView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     let person: Person
 
+    @State private var sessionId = UUID()
     @State private var recorder = Recorder()
+    @State private var captioner = LiveCaptioner()
     @State private var startError: String?
     @State private var saving = false
 
     var body: some View {
         NavigationStack {
             // Recorder is not Observable; the TimelineView wraps the whole
-            // screen so the stop button re-evaluates recorder state each tick.
+            // screen so timer, meter, and buttons re-evaluate each tick.
             TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-            VStack(spacing: 32) {
-                Spacer()
+                VStack(spacing: 16) {
+                    VStack(spacing: 12) {
+                        Text(TranscriptExport.timestamp(recorder.duration))
+                            .font(.system(size: 48, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                        LevelMeter(level: recorder.level)
+                    }
+                    .padding(.top, 12)
 
-                VStack(spacing: 24) {
-                    Text(TranscriptExport.timestamp(recorder.duration))
-                        .font(.system(size: 56, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    LevelMeter(level: recorder.level)
-                }
+                    captionPanel
 
-                Text("Recording 1-on-1 with \(person.name)")
-                    .font(.headline)
+                    Label("Make sure \(person.name) knows this conversation is being recorded.",
+                          systemImage: "hand.raised")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
 
-                Label("Make sure \(person.name) knows this conversation is being recorded.",
-                      systemImage: "hand.raised")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    if let startError {
+                        Text(startError).font(.footnote).foregroundStyle(.red)
+                    }
+
+                    Button {
+                        stopAndSave()
+                    } label: {
+                        Label(saving ? "Saving…" : "Stop & Transcribe", systemImage: "stop.circle.fill")
+                            .font(.title3.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(saving || !recorder.isRecording)
                     .padding(.horizontal)
-
-                Spacer()
-
-                if let startError {
-                    Text(startError).font(.footnote).foregroundStyle(.red)
                 }
-
-                Button {
-                    stopAndSave()
-                } label: {
-                    Label(saving ? "Saving…" : "Stop & Transcribe", systemImage: "stop.circle.fill")
-                        .font(.title3.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(saving || !recorder.isRecording)
-                .padding(.horizontal)
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 24)
-            }
+            .navigationTitle("1-on-1 with \(person.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Discard") {
-                        _ = recorder.stop()
-                        dismiss()
-                    }
+                    Button("Discard") { discard() }
                 }
             }
             .interactiveDismissDisabled()
-            .onAppear {
-                do {
-                    try recorder.start()
-                } catch {
-                    startError = "Could not start recording: \(error.localizedDescription)"
+            .onAppear { begin() }
+            .onDisappear { store.setRecordingActive(false) }
+        }
+    }
+
+    @ViewBuilder
+    private var captionPanel: some View {
+        Group {
+            switch captioner.status {
+            case .live where !captioner.text.isEmpty:
+                ScrollView {
+                    Text(captioner.committed)
+                    + Text(captioner.partial).foregroundStyle(.secondary)
                 }
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .defaultScrollAnchor(.bottom)
+            case .live:
+                Text("Listening…")
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .loading(let message):
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .unavailable, .idle:
+                Text("Live captions unavailable — the full transcript is created when you stop.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+    }
+
+    private func begin() {
+        do {
+            let fileURL = try store.beginRecording(id: sessionId, person: person)
+            recorder.onSamples = captioner.feed
+            try recorder.start(writingTo: fileURL)
+            store.setRecordingActive(true)
+            captioner.start()
+        } catch {
+            startError = "Could not start recording: \(error.localizedDescription)"
+        }
+    }
+
+    private func discard() {
+        _ = recorder.stop()
+        captioner.reset()
+        store.discardRecording(id: sessionId)
+        dismiss()
     }
 
     private func stopAndSave() {
         saving = true
         let samples = recorder.stop()
-        let session = SessionRecord(
-            personId: person.id,
-            title: "1-on-1 with \(person.name)",
-            date: Date(),
-            duration: Double(samples.count) / Double(Recorder.sampleRate)
-        )
+        captioner.stop()
         do {
-            try WAVFile.write(
-                samples: samples,
-                sampleRate: Recorder.sampleRate,
-                to: store.audioURL(for: session)
-            )
-            store.addSession(session)
+            let duration = Double(samples.count) / Double(Recorder.sampleRate)
+            let session = try store.finishRecording(id: sessionId, duration: duration)
             store.startProcessing(session)
             dismiss()
         } catch {
