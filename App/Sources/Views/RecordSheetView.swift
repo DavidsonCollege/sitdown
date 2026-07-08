@@ -13,16 +13,17 @@ struct RecordSheetView: View {
 
     var body: some View {
         NavigationStack {
+            // Recorder is not Observable; the TimelineView wraps the whole
+            // screen so the stop button re-evaluates recorder state each tick.
+            TimelineView(.periodic(from: .now, by: 0.1)) { _ in
             VStack(spacing: 32) {
                 Spacer()
 
-                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                    VStack(spacing: 24) {
-                        Text(TranscriptExport.timestamp(recorder.duration))
-                            .font(.system(size: 56, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                        LevelMeter(level: recorder.level)
-                    }
+                VStack(spacing: 24) {
+                    Text(TranscriptExport.timestamp(recorder.duration))
+                        .font(.system(size: 56, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                    LevelMeter(level: recorder.level)
                 }
 
                 Text("Recording 1-on-1 with \(person.name)")
@@ -54,6 +55,7 @@ struct RecordSheetView: View {
                 .padding(.horizontal)
             }
             .padding(.bottom, 24)
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

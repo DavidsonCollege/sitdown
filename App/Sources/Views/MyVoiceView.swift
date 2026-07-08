@@ -28,19 +28,22 @@ struct MyVoiceView: View {
                 }
 
                 if isRecording {
+                    // Recorder is not Observable; everything that reads it must
+                    // live inside the TimelineView so it refreshes each tick.
                     TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 12) {
                             Text("Recording… \(TranscriptExport.timestamp(recorder.duration))")
                                 .monospacedDigit()
                             LevelMeter(level: recorder.level)
-                                .padding(.horizontal, 0)
+                            Button("Stop & Save") { finishEnrollment() }
+                                .disabled(recorder.duration < Self.minSeconds)
+                            if recorder.duration < Self.minSeconds {
+                                Text("Keep talking until you have at least \(Int(Self.minSeconds)) seconds.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    Button("Stop & Save") { finishEnrollment() }
-                        .disabled(recorder.duration < Self.minSeconds)
-                    Text("Keep talking until you have at least \(Int(Self.minSeconds)) seconds.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 } else if isEmbedding {
                     HStack {
                         ProgressView()
