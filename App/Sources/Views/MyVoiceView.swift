@@ -85,72 +85,31 @@ struct MyVoiceView: View {
                 Text("Words transcription tends to get wrong. Add, import, or export them here — or keep the list synchronized from a URL below.")
             }
 
-            Section {
-                TextField("https://example.com/vocabulary.json", text: $store.vocabularySourceURL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit {
-                        store.save()
-                        Task { await store.syncVocabulary() }
-                    }
-                if !store.vocabularySourceURL.isEmpty {
-                    DisclosureGroup("Request Headers") {
-                        // Id-based bindings, not ForEach($...): rows outlive
-                        // removal by one render pass, and a positional binding
-                        // read after the array shrinks crashes.
-                        ForEach(store.vocabularyHeaders) { header in
-                            HStack {
-                                // Explicit remove button: swipe-to-delete is
-                                // unreliable inside a DisclosureGroup.
-                                Button {
-                                    store.vocabularyHeaders.removeAll { $0.id == header.id }
-                                    store.save()
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundStyle(.red)
-                                }
-                                .buttonStyle(.borderless)
-                                TextField("Header", text: headerBinding(header.id, \.name))
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .frame(maxWidth: 140)
-                                Divider()
-                                TextField("Value", text: headerBinding(header.id, \.value))
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                            }
-                            .font(.callout.monospaced())
-                        }
-                        .onDelete { offsets in
-                            store.vocabularyHeaders.remove(atOffsets: offsets)
-                            store.save()
-                        }
-                        Button {
-                            store.vocabularyHeaders.append(Store.HTTPHeader())
-                        } label: {
-                            Label("Add Header", systemImage: "plus")
-                        }
-                    }
-                    Button {
-                        store.save()
-                        Task { await store.syncVocabulary() }
-                    } label: {
-                        Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                }
-            } header: {
-                Text("Vocabulary sync")
-            } footer: {
-                if let error = store.vocabularySyncError {
-                    Text("Sync failed: \(error)")
-                        .foregroundStyle(.red)
-                } else if let last = store.vocabularyLastSync, !store.vocabularySourceURL.isEmpty {
-                    Text("Synced \(last.formatted(.relative(presentation: .named))). The file at this URL replaces the vocabulary list on each sync — edit it there, not here. Headers are sent with every request (for example an Authorization token).")
-                } else {
-                    Text("Point at a JSON vocabulary file (same format as the export) and Luxicon will keep the list synchronized whenever the app opens. The file replaces the vocabulary list; add auth via Request Headers if needed.")
-                }
-            }
+            SyncSourceSection(
+                title: "Vocabulary sync",
+                urlPlaceholder: "https://example.com/vocabulary.json",
+                sourceURL: $store.vocabularySourceURL,
+                headers: $store.vocabularyHeaders,
+                lastSync: store.vocabularyLastSync,
+                syncError: store.vocabularySyncError,
+                idleFooter: "Point at a JSON vocabulary file (same format as the export) and Luxicon will keep the list synchronized whenever the app opens. The file replaces the vocabulary list; add auth via Request Headers if needed.",
+                syncedFooter: "The file at this URL replaces the vocabulary list on each sync — edit it there, not here. Headers are sent with every request (for example an Authorization token).",
+                onSave: { store.save() },
+                onSync: { Task { await store.syncVocabulary() } }
+            )
+
+            SyncSourceSection(
+                title: "People sync",
+                urlPlaceholder: "https://example.com/people.json",
+                sourceURL: $store.peopleSourceURL,
+                headers: $store.peopleHeaders,
+                lastSync: store.peopleLastSync,
+                syncError: store.peopleSyncError,
+                idleFooter: "Point at a JSON people file (same format as Export People) and Luxicon will keep the roster synchronized whenever the app opens. Syncing adds and updates people (name and context) and never removes anyone.",
+                syncedFooter: "Syncing adds and updates people (name and context) and never removes anyone — remove people manually in the list. Headers are sent with every request (for example an Authorization token).",
+                onSave: { store.save() },
+                onSync: { Task { await store.syncPeople() } }
+            )
 
             Section {
                 Picker("Engine", selection: $store.asrEngine) {
@@ -195,21 +154,6 @@ struct MyVoiceView: View {
             if isRecording { _ = recorder.stop() }
             store.save()
         }
-    }
-
-    /// Binding into a header row by id; reads return "" and writes no-op
-    /// once the row has been removed, so a stale row can't trap.
-    private func headerBinding(
-        _ id: UUID, _ keyPath: WritableKeyPath<Store.HTTPHeader, String>
-    ) -> Binding<String> {
-        Binding(
-            get: { store.vocabularyHeaders.first { $0.id == id }?[keyPath: keyPath] ?? "" },
-            set: { newValue in
-                guard let i = store.vocabularyHeaders.firstIndex(where: { $0.id == id })
-                else { return }
-                store.vocabularyHeaders[i][keyPath: keyPath] = newValue
-            }
-        )
     }
 
     private func startEnrollment() {
