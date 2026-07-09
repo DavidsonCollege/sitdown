@@ -66,6 +66,11 @@ final class Store {
     /// Transient sync status for the UI; not persisted.
     var vocabularySyncError: String?
     @ObservationIgnored var vocabularyLastSyncAttempt: Date?
+    /// Set when the persisted library could not be read at launch (the file
+    /// is quarantined, never overwritten). Shown once by the root view.
+    var startupWarning: String?
+    /// Set when persisting the library fails (e.g. storage full).
+    var saveError: String?
 
     struct HTTPHeader: Codable, Equatable, Identifiable {
         var id = UUID()
@@ -97,6 +102,9 @@ final class Store {
     static let audioDirURL = documentsURL.appendingPathComponent("audio", isDirectory: true)
     static let photosDirURL = documentsURL.appendingPathComponent("photos", isDirectory: true)
 
+    private static let keychainSyncToken = "syncToken"
+    private static let keychainVocabHeaders = "vocabularyHeaders"
+
     /// Read the people list without constructing a Store (no recovery side
     /// effects) — used by App Intents entity queries.
     static func peekPeople() -> [Person] {
@@ -108,6 +116,14 @@ final class Store {
     init() {
         try? FileManager.default.createDirectory(at: Self.audioDirURL, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: Self.photosDirURL, withIntermediateDirectories: true)
+        // Data protection: new files inherit the directory's class, so the
+        // library is unreadable while the device is locked. The live recording
+        // stays writable because its file is already open (`completeUnlessOpen`).
+        for url in [Self.documentsURL, Self.audioDirURL, Self.photosDirURL] {
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUnlessOpen],
+                ofItemAtPath: url.path)
+        }
         load()
         // Recover sessions stuck mid-processing by an app kill.
         for i in sessions.indices where sessions[i].status == .processing {
@@ -117,8 +133,26 @@ final class Store {
     }
 
     func load() {
-        guard let data = try? Data(contentsOf: Self.storeURL),
-              let persisted = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
+        // Secrets live in the Keychain; store.json copies (pre-build-6) migrate below.
+        syncToken = KeychainStore.string(for: Self.keychainSyncToken) ?? ""
+        vocabularyHeaders = KeychainStore.data(for: Self.keychainVocabHeaders)
+            .flatMap { try? JSONDecoder().decode([HTTPHeader].self, from: $0) } ?? []
+
+        guard FileManager.default.fileExists(atPath: Self.storeURL.path) else { return }
+        let persisted: Persisted
+        do {
+            let data = try Data(contentsOf: Self.storeURL)
+            persisted = try JSONDecoder().decode(Persisted.self, from: data)
+        } catch {
+            // Never overwrite what we can't read: set it aside so the next
+            // save() can't destroy the library, and tell the user.
+            let backupName = "store.corrupt-\(Int(Date().timeIntervalSince1970)).json"
+            try? FileManager.default.moveItem(
+                at: Self.storeURL,
+                to: Self.documentsURL.appendingPathComponent(backupName))
+            startupWarning = "The session library could not be read, so it was set aside as \(backupName) and Luxicon started fresh. Audio files are untouched. Please report this."
+            return
+        }
         people = persisted.people
         sessions = persisted.sessions
         myName = persisted.myName
@@ -128,15 +162,28 @@ final class Store {
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
         asrEngine = persisted.asrEngine ?? .parakeet
         vocabularySourceURL = persisted.vocabularySourceURL ?? ""
-        vocabularyHeaders = persisted.vocabularyHeaders ?? []
         vocabularyLastSync = persisted.vocabularyLastSync
         autoSummarize = persisted.autoSummarize ?? true
-        syncToken = persisted.syncToken ?? ""
         syncHost = persisted.syncHost ?? ""
         autoPushToMac = persisted.autoPushToMac ?? false
+
+        // One-way migration: secrets that older builds kept in store.json.
+        if let legacyToken = persisted.syncToken, !legacyToken.isEmpty {
+            syncToken = legacyToken
+            KeychainStore.set(legacyToken, for: Self.keychainSyncToken)
+        }
+        if let legacyHeaders = persisted.vocabularyHeaders, !legacyHeaders.isEmpty {
+            vocabularyHeaders = legacyHeaders
+            KeychainStore.set(try? JSONEncoder().encode(legacyHeaders), for: Self.keychainVocabHeaders)
+        }
     }
 
     func save() {
+        KeychainStore.set(syncToken, for: Self.keychainSyncToken)
+        KeychainStore.set(
+            vocabularyHeaders.isEmpty ? nil : try? JSONEncoder().encode(vocabularyHeaders),
+            for: Self.keychainVocabHeaders)
+
         let persisted = Persisted(
             people: people, sessions: sessions,
             myName: myName, myPhotoFileName: myPhotoFileName,
@@ -144,15 +191,19 @@ final class Store {
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
             asrEngine: asrEngine,
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
-            vocabularyHeaders: vocabularyHeaders.isEmpty ? nil : vocabularyHeaders,
+            vocabularyHeaders: nil,  // Keychain-only since build 6
             vocabularyLastSync: vocabularyLastSync,
             autoSummarize: autoSummarize,
-            syncToken: syncToken.isEmpty ? nil : syncToken,
+            syncToken: nil,          // Keychain-only since build 6
             syncHost: syncHost.isEmpty ? nil : syncHost,
             autoPushToMac: autoPushToMac
         )
-        if let data = try? JSONEncoder().encode(persisted) {
-            try? data.write(to: Self.storeURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(persisted)
+            try data.write(to: Self.storeURL, options: [.atomic, .completeFileProtectionUnlessOpen])
+            saveError = nil
+        } catch {
+            saveError = "Could not save the session library: \(error.localizedDescription). Free up storage and try again."
         }
     }
 

@@ -94,6 +94,14 @@ struct PeopleListView: View {
             } message: {
                 Text("Who do you hold 1-on-1s with?")
             }
+            .alert("Library Problem", isPresented: Binding(
+                get: { store.startupWarning != nil || store.saveError != nil },
+                set: { if !$0 { store.startupWarning = nil; store.saveError = nil } }
+            )) {
+                Button("OK") { store.startupWarning = nil; store.saveError = nil }
+            } message: {
+                Text(store.startupWarning ?? store.saveError ?? "")
+            }
             // Siri / Action button: "Start a 1-on-1 with Josh" lands here.
             .fullScreenCover(item: $coordinator.recordPerson) { person in
                 RecordSheetView(person: person)
