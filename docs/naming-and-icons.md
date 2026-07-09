@@ -17,6 +17,26 @@ name. Shortlist, collision checks, and paste-ready icon-generation prompts.
 Avoid (trademark/collision): Whisker (Litter-Robot), CatChat, Catbird, Purrview
 (Microsoft Purview adjacency).
 
+## Round 2 (Lux / pairs / closed loop / instrument portmanteaus)
+
+| Name | Reference | Fit | Collisions |
+|---|---|---|---|
+| **Luxicon** | Motto ("Alenda Lux…") + lexicon | Light on your words; the app literally grounds ASR in a personal lexicon | Only stale/other-class (discontinued Eaton lighting tool) |
+| **Caracall** | Caracal — the wildcat famed for hunting by hearing alone — + call/recall | Oncillascope-style sibling; uncannily on-point for diarization | Zero hits |
+| **Lynxicon** | Lynx (wildcat) + lexicon, homophone of Luxicon | Mascot + motto + vocabulary in one | Zero hits — cleanest checked |
+| **Duologue** | Real word: a two-person conversation | The most precise English word for what the app records | Dormant only |
+| **Segue** | Each 1:1 segues into the next (also a UIKit pun) | Closed loop in one word | Segway homophone; spelling risk |
+| Felinograph | Feline + phonograph | Charming instrument portmanteau | Zero hits; whimsy vs HR credibility |
+| Alenda | First word of the motto ("must be nourished") | Development-as-cultivation reframe | Opaque outside Davidson |
+| Counterpart | The person across the table; diarized "parts" pun | Warm, peer-flavored | Starz series; generic |
+
+Disqualified on collisions: **Dyad** (dyad.sh — active local-first AI app builder),
+**Cadence** (≥3 live 1:1-meeting products), **Tandem** (language-exchange app).
+
+Round-2 ranked: 1. Luxicon 2. Caracall 3. Lynxicon 4. Duologue 5. Segue.
+Pattern worth considering: public app name (e.g. Luxicon) + instrument-named
+core framework (e.g. Caracall) — the Oncillascope/WiFiAnalyzerKit pattern.
+
 ## Icon generation prompts
 
 Davidson palette: crimson `#AC1A2F`, black, cream/white accents. All prompts
