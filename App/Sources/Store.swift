@@ -8,6 +8,8 @@ struct Person: Codable, Identifiable, Hashable {
     var name: String
     /// Profile picture file in `Store.photosDirURL`, if one has been set.
     var photoFileName: String?
+    /// Background for the summarizer: role, projects, current threads.
+    var context: String?
 }
 
 /// One recorded 1-on-1.
@@ -48,6 +50,8 @@ final class Store {
     var myName: String = "Me"
     /// The user's own profile picture file in `photosDirURL`, if set.
     var myPhotoFileName: String?
+    /// Background about the user fed to the summarizer, like `Person.context`.
+    var myContext: String = ""
     /// Speaker embedding of the user's enrolled voice, if enrolled.
     var myVoiceEmbedding: [Float]?
     /// User-defined terms (jargon, project names) to ground transcription in.
@@ -90,6 +94,7 @@ final class Store {
         var sessions: [SessionRecord]
         var myName: String
         var myPhotoFileName: String?
+        var myContext: String?
         var myVoiceEmbedding: [Float]?
         /// Pre-0.1.0(4) plain-string vocabulary; migrated to `vocabularyEntries`.
         var customVocabulary: [String]?
@@ -164,6 +169,7 @@ final class Store {
         sessions = persisted.sessions
         myName = persisted.myName
         myPhotoFileName = persisted.myPhotoFileName
+        myContext = persisted.myContext ?? ""
         myVoiceEmbedding = persisted.myVoiceEmbedding
         vocabularyEntries = persisted.vocabularyEntries
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
@@ -194,6 +200,7 @@ final class Store {
         let persisted = Persisted(
             people: people, sessions: sessions,
             myName: myName, myPhotoFileName: myPhotoFileName,
+            myContext: myContext.isEmpty ? nil : myContext,
             myVoiceEmbedding: myVoiceEmbedding,
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
             asrEngine: asrEngine,

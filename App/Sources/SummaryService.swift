@@ -11,6 +11,7 @@ actor SummaryService {
 
     func summarize(
         _ transcript: MeetingTranscript,
+        context: [SummaryParticipant],
         progress: @Sendable @escaping (String) -> Void
     ) async throws -> SessionSummary {
         // Actor reentrancy: without the gate, two sessions summarizing at once
@@ -27,7 +28,7 @@ actor SummaryService {
         }
         progress("Summarizing…")
         try Task.checkCancellation()
-        let result = try summarizer!.summarize(transcript)
+        let result = try summarizer!.summarize(transcript, context: context)
         return SessionSummary(
             headline: result.headline,
             overview: result.overview,
@@ -46,9 +47,14 @@ extension Store {
         let sessionId = session.id
         processing.summarizing[sessionId] = "Preparing…"
 
+        var context = [SummaryParticipant(name: myName, context: myContext)]
+        if let person = person(id: session.personId) {
+            context.append(SummaryParticipant(name: person.name, context: person.context ?? ""))
+        }
+
         let task = Task {
             do {
-                let summary = try await SummaryService.shared.summarize(transcript) { stage in
+                let summary = try await SummaryService.shared.summarize(transcript, context: context) { stage in
                     Task { @MainActor in
                         self.processing.summarizing[sessionId] = stage
                     }
