@@ -11,10 +11,6 @@ struct MyVoiceView: View {
     @State private var isRecording = false
     @State private var isEmbedding = false
     @State private var errorMessage: String?
-    @State private var newTerm = ""
-    @State private var vocabularyFileURL: URL?
-    @State private var importingVocabulary = false
-    @State private var importResult: String?
 
     private static let minSeconds: Double = 8
 
@@ -71,43 +67,20 @@ struct MyVoiceView: View {
             }
 
             Section {
-                ForEach(store.vocabularyEntries, id: \.term) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.term)
-                        if !entry.soundsLike.isEmpty {
-                            Text("sounds like: \(entry.soundsLike.joined(separator: ", "))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .onDelete { offsets in
-                    store.vocabularyEntries.remove(atOffsets: offsets)
-                    store.save()
-                }
-                HStack {
-                    TextField("Add a name or term", text: $newTerm)
-                        .onSubmit { addTerm() }
-                    Button("Add") { addTerm() }
-                        .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                if let vocabularyFileURL {
-                    ShareLink(item: vocabularyFileURL) {
-                        Label("Export Vocabulary Template", systemImage: "square.and.arrow.up")
-                    }
-                }
-                Button {
-                    importingVocabulary = true
+                NavigationLink {
+                    VocabularyListView()
                 } label: {
-                    Label("Import Vocabulary…", systemImage: "square.and.arrow.down")
-                }
-                ShareLink(item: VocabularyJSON.agentPrompt(existing: store.vocabularyEntries)) {
-                    Label("Share Agent Prompt", systemImage: "sparkles")
+                    HStack {
+                        Text("Manage Vocabulary")
+                        Spacer()
+                        Text("\(store.vocabularyEntries.count) terms")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } header: {
                 Text("Vocabulary")
             } footer: {
-                Text("Project names, acronyms, jargon — words transcription tends to get wrong. Your name and your people's names are included automatically. Export the JSON template, have a person or AI assistant fill in terms and common mishearings, then import it back.")
+                Text("Words transcription tends to get wrong. Add, import, or export them here — or keep the list synchronized from a URL below.")
             }
 
             Section {
@@ -121,14 +94,27 @@ struct MyVoiceView: View {
                     }
                 if !store.vocabularySourceURL.isEmpty {
                     DisclosureGroup("Request Headers") {
-                        ForEach($store.vocabularyHeaders) { $header in
+                        // Id-based bindings, not ForEach($...): rows outlive
+                        // removal by one render pass, and a positional binding
+                        // read after the array shrinks crashes.
+                        ForEach(store.vocabularyHeaders) { header in
                             HStack {
-                                TextField("Header", text: $header.name)
+                                // Explicit remove button: swipe-to-delete is
+                                // unreliable inside a DisclosureGroup.
+                                Button {
+                                    store.vocabularyHeaders.removeAll { $0.id == header.id }
+                                    store.save()
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.borderless)
+                                TextField("Header", text: headerBinding(header.id, \.name))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
                                     .frame(maxWidth: 140)
                                 Divider()
-                                TextField("Value", text: $header.value)
+                                TextField("Value", text: headerBinding(header.id, \.value))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
                             }
@@ -203,60 +189,25 @@ struct MyVoiceView: View {
             }
         }
         .navigationTitle("My Voice")
-        .onAppear { writeVocabularyFile() }
-        .onChange(of: store.vocabularyEntries) { writeVocabularyFile() }
         .onDisappear {
             if isRecording { _ = recorder.stop() }
             store.save()
         }
-        .fileImporter(
-            isPresented: $importingVocabulary,
-            allowedContentTypes: [.json, .plainText, .text]
-        ) { result in
-            importVocabulary(result)
-        }
-        .alert("Vocabulary Import", isPresented: Binding(
-            get: { importResult != nil },
-            set: { if !$0 { importResult = nil } }
-        )) {
-            Button("OK") { importResult = nil }
-        } message: {
-            Text(importResult ?? "")
-        }
     }
 
-    private func addTerm() {
-        let term = newTerm.trimmingCharacters(in: .whitespaces)
-        guard !term.isEmpty,
-              !store.vocabularyEntries.contains(where: {
-                  $0.term.caseInsensitiveCompare(term) == .orderedSame
-              }) else { return }
-        store.vocabularyEntries.append(VocabularyEntry(term: term))
-        store.save()
-        newTerm = ""
-    }
-
-    /// ShareLink needs a file URL ready before the tap.
-    private func writeVocabularyFile() {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Luxicon Vocabulary.json")
-        if let data = try? VocabularyJSON.template(existing: store.vocabularyEntries) {
-            try? data.write(to: url)
-            vocabularyFileURL = url
-        }
-    }
-
-    private func importVocabulary(_ result: Result<URL, Error>) {
-        do {
-            let url = try result.get()
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let entries = try VocabularyJSON.parse(Data(contentsOf: url))
-            let count = store.importVocabulary(entries)
-            importResult = "Imported \(count) terms."
-        } catch {
-            importResult = "Import failed: \(error.localizedDescription)"
-        }
+    /// Binding into a header row by id; reads return "" and writes no-op
+    /// once the row has been removed, so a stale row can't trap.
+    private func headerBinding(
+        _ id: UUID, _ keyPath: WritableKeyPath<Store.HTTPHeader, String>
+    ) -> Binding<String> {
+        Binding(
+            get: { store.vocabularyHeaders.first { $0.id == id }?[keyPath: keyPath] ?? "" },
+            set: { newValue in
+                guard let i = store.vocabularyHeaders.firstIndex(where: { $0.id == id })
+                else { return }
+                store.vocabularyHeaders[i][keyPath: keyPath] = newValue
+            }
+        )
     }
 
     private func startEnrollment() {
