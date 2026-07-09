@@ -61,6 +61,31 @@ import Foundation
         #expect(prompt.contains("JD: How was the week?"))
         #expect(prompt.contains("Josh (49% talk time)"))
     }
+
+    @Test func promptIncludesParticipantBackground() {
+        let transcript = MeetingTranscript(
+            title: "Weekly 1:1", date: Date(timeIntervalSince1970: 1_780_000_000),
+            duration: 60,
+            turns: [TranscriptTurn(id: 0, speakerId: 0, speakerName: "Josh", start: 0, end: 30, text: "Hi.")]
+        )
+        let prompt = MeetingSummarizer.userPrompt(for: transcript, context: [
+            SummaryParticipant(name: "Josh", context: "Senior sysadmin; runs identity platform"),
+            SummaryParticipant(name: "JD", context: "   "),
+        ])
+        #expect(prompt.contains("Participant background"))
+        #expect(prompt.contains("- Josh: Senior sysadmin; runs identity platform"))
+        // Blank context rows are dropped entirely, not emitted as empty lines.
+        #expect(!prompt.contains("- JD:"))
+    }
+
+    @Test func promptOmitsBackgroundBlockWithoutContext() {
+        let transcript = MeetingTranscript(
+            title: "Weekly 1:1", date: Date(timeIntervalSince1970: 1_780_000_000),
+            duration: 60,
+            turns: [TranscriptTurn(id: 0, speakerId: 0, speakerName: "Josh", start: 0, end: 30, text: "Hi.")]
+        )
+        #expect(!MeetingSummarizer.userPrompt(for: transcript).contains("Participant background"))
+    }
 }
 
 @Suite struct SummaryExportTests {

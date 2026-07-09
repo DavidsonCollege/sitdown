@@ -1,6 +1,19 @@
 import Foundation
 import Qwen3Chat
 
+/// Background knowledge about a meeting participant, injected into the
+/// summarization prompt at call time — never persisted with the transcript,
+/// so editing context improves the next regeneration.
+public struct SummaryParticipant: Sendable, Equatable {
+    public var name: String
+    public var context: String
+
+    public init(name: String, context: String) {
+        self.name = name
+        self.context = context
+    }
+}
+
 /// On-device meeting summarization via Qwen3.5 (MLX, int4 ≈ 404 MB download).
 ///
 /// GPU-bound and synchronous like the rest of the pipeline — run from a
@@ -20,14 +33,17 @@ public final class MeetingSummarizer {
     }
 
     /// Produce a headline + markdown overview. The caller stamps `generatedAt`.
-    public func summarize(_ transcript: MeetingTranscript) throws -> (headline: String, overview: String) {
+    public func summarize(
+        _ transcript: MeetingTranscript,
+        context: [SummaryParticipant] = []
+    ) throws -> (headline: String, overview: String) {
         var sampling = ChatSamplingConfig.default
         sampling.temperature = 0.3
         sampling.maxTokens = 700
         let raw = try chat.generate(
             messages: [
                 ChatMessage(role: .system, content: Self.systemPrompt),
-                ChatMessage(role: .user, content: Self.userPrompt(for: transcript)),
+                ChatMessage(role: .user, content: Self.userPrompt(for: transcript, context: context)),
             ],
             sampling: sampling
         )
@@ -50,14 +66,17 @@ public final class MeetingSummarizer {
     **Action items** — bullets with owner names, or "None recorded".
     """
 
-    static func userPrompt(for transcript: MeetingTranscript) -> String {
+    static func userPrompt(
+        for transcript: MeetingTranscript,
+        context: [SummaryParticipant] = []
+    ) -> String {
         let participants = transcript.speakers.map {
             "\($0.displayName) (\(Int(($0.talkShare * 100).rounded()))% talk time)"
         }.joined(separator: ", ")
         let lines = transcript.turns
             .map { "\($0.displayName): \($0.text)" }
             .joined(separator: "\n")
-        return """
+        var prompt = """
         Meeting: \(transcript.title)
         Date: \(transcript.date.formatted(date: .long, time: .shortened))
         Duration: \(TranscriptExport.timestamp(transcript.duration))
@@ -66,6 +85,15 @@ public final class MeetingSummarizer {
         Transcript:
         \(clip(lines))
         """
+        let background = context
+            .map { ($0.name, $0.context.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { !$0.1.isEmpty }
+        if !background.isEmpty {
+            prompt += "\n\nParticipant background — use only to interpret the "
+                + "conversation; never report it as something said in the meeting:\n"
+                + background.map { "- \($0.0): \($0.1)" }.joined(separator: "\n")
+        }
+        return prompt
     }
 
     /// Keep prompts within a sane prefill budget on phone hardware: very long
