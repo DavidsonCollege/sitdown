@@ -31,7 +31,7 @@ extension Qwen3ASRModel: TurnTranscriber {
 }
 
 /// Which ASR engine transcribes speaker turns.
-public enum ASREngine: String, Codable, Sendable, CaseIterable {
+public enum ASREngine: String, Codable, Sendable {
     /// Parakeet TDT — CoreML/ANE, fast, the default.
     case parakeet
     /// Qwen3-ASR 0.6B 4-bit — MLX/GPU, supports vocabulary context injection.

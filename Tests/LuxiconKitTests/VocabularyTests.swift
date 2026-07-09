@@ -53,12 +53,6 @@ import Testing
         #expect(VocabularyCorrector.correct(text, vocabulary: ["it", "so"]) == text)
     }
 
-    @Test func similarityMetric() {
-        #expect(VocabularyCorrector.similarity("choreo", "choreo") == 1.0)
-        #expect(VocabularyCorrector.similarity("corio", "choreo") > 0.6)
-        #expect(VocabularyCorrector.similarity("abc", "xyz") == 0.0)
-    }
-
     @Test func contextStringBuildsAndSkipsEmpty() {
         #expect(VocabularyCorrector.contextString(for: []) == nil)
         #expect(VocabularyCorrector.contextString(for: [VocabularyEntry(term: "  ")]) == nil)

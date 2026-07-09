@@ -60,12 +60,6 @@ final class LiveCaptioner {
         { [sink] samples in sink.yield(samples) }
     }
 
-    /// While true, incoming audio is dropped (e.g. app backgrounded — CoreML
-    /// GPU work in background can kill the process).
-    nonisolated func setSuspended(_ suspended: Bool) {
-        sink.suspended = suspended
-    }
-
     func start() {
         guard status == .idle || status == .unavailable else { return }
         status = .loading("Preparing live captions…")

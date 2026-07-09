@@ -4,7 +4,7 @@ import UIKit
 #endif
 
 /// One user-vocabulary term: canonical spelling plus optional known
-/// mishearings and agent-facing metadata (see `VocabularyCSV`).
+/// mishearings and agent-facing metadata (see `VocabularyJSON`).
 public struct VocabularyEntry: Codable, Sendable, Equatable, Hashable {
     /// Canonical spelling, as it should appear in transcripts.
     public var term: String
@@ -203,12 +203,6 @@ public enum VocabularyCorrector {
         return Set(content.split(separator: "\n").map { $0.lowercased() })
     }()
     #endif
-
-    /// Normalized similarity: 1 − levenshtein / max length.
-    static func similarity(_ a: String, _ b: String) -> Double {
-        guard !a.isEmpty, !b.isEmpty else { return 0 }
-        return 1.0 - Double(distance(a, b)) / Double(max(a.count, b.count))
-    }
 
     /// Levenshtein edit distance.
     static func distance(_ a: String, _ b: String) -> Int {

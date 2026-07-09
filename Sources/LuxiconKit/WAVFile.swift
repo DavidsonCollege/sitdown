@@ -39,10 +39,6 @@ public enum WAVFile {
         header(sampleCount: samples.count, sampleRate: sampleRate) + pcmData(samples: samples)
     }
 
-    public static func write(samples: [Float], sampleRate: Int, to url: URL) throws {
-        try encode(samples: samples, sampleRate: sampleRate).write(to: url)
-    }
-
     /// Rewrite the RIFF/data sizes from the actual file length. Recovers files
     /// whose writer died before `finalize()` (header still shows 0 samples).
     /// Returns the duration in seconds implied by the file length.
