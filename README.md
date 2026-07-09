@@ -1,8 +1,8 @@
 # Luxicon
 
 **On-device 1-on-1 recorder for managers.** Record a sit-down with a direct
-report on your iPhone, get a speaker-labeled transcript that never leaves the
-device, and export it as clean markdown or JSON for the AI assistant of your
+report on your iPhone, get a speaker-labeled transcript that stays on your
+devices, and export it as clean markdown or JSON for the AI assistant of your
 choice — performance summaries, check-in prep, longitudinal review.
 
 No cloud APIs. No per-minute pricing. No audio leaving the phone.
@@ -26,8 +26,10 @@ All inference runs on the Apple Neural Engine / GPU via
 - **Transcription** — NVIDIA Parakeet TDT (CoreML)
 - **Speaker ID** — WeSpeaker enrollment matching (cosine similarity)
 
-Models (~700 MB) download from Hugging Face on first transcription and are
-cached on-device.
+Models download from Hugging Face on first use and are cached on-device:
+~700 MB for transcription + diarization, ~400 MB more for on-device
+summaries, plus a small live-caption model (~1.2 GB total if you use
+everything).
 
 Measured on an M-series Mac (release build): a 50-second two-speaker meeting
 diarizes, transcribes, and speaker-matches in 4.6 s (0.09× real-time), with
@@ -41,16 +43,24 @@ Sources/LuxiconKit/     Core pipeline (platform-neutral Swift package)
   MeetingPipeline.swift   diarize → per-turn ASR → speaker naming
   Models.swift            transcript, turns, stats, enrollment types
   Export.swift            markdown + JSON export
+  MeetingSummarizer.swift on-device LLM summaries (Qwen3.5, MLX)
+  Vocabulary*.swift       user glossary + ASR correction pass
+  LuxiconSync.swift       LAN sync protocol (TLS-PSK) + SyncPusher.swift
 Sources/LuxiconCLI/     macOS command-line harness
-Sources/LuxiconMCP/     MCP server over a local transcript library
+Sources/LuxiconMCP/     MCP server + `listen` sync receiver
 App/                    iOS app (SwiftUI, generated with xcodegen)
+  Widgets/                Control Center control + Live Activity
+Tests/                  swift-testing unit tests (offline, no models)
 ```
 
 ## Building
 
 ### iOS app
 
-Requires Xcode 16+, iOS 18+ device (A13 or later recommended).
+Requires **Xcode 26+** to build (the background-processing code uses iOS 26
+SDK symbols, runtime-gated so it runs fine on iOS 18+ devices). Target
+device: iOS 18+, A13 or later recommended. The Swift package (CLI, MCP
+server) builds with Xcode 16+.
 
 ```bash
 brew install xcodegen
@@ -73,6 +83,11 @@ bash scripts/build_mlx_metallib.sh debug   # compile MLX Metal shaders
 
 First run may require the Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`.
 
+Other flags: `--vocab "Choreo, OKR"` / `--vocab-file terms.json` ground
+transcription in your jargon, `--engine qwen3` switches the ASR engine, and
+`luxicon-cli push export.json --token <token> [--host <mac-ip>]` exercises
+the same sync path the app uses.
+
 ### MCP server (query transcripts from Claude)
 
 `luxicon-mcp` serves a local folder of Luxicon exports to MCP clients
@@ -86,9 +101,23 @@ swift build -c release
 claude mcp add luxicon -- "$PWD/.build/release/luxicon-mcp"
 ```
 
-Tools: `list_people`, `list_sessions`, `get_transcript`,
+Tools: `list_people`, `list_sessions`, `get_transcript`, `get_summary`,
 `search_transcripts`, `talk_time_trends`. The library is re-scanned on every
-call, so newly AirDropped exports appear immediately.
+call, so newly pushed or AirDropped exports appear immediately.
+
+### Mac sync (push from the phone)
+
+Instead of AirDropping exports, run the listener and pair the phone once:
+
+```bash
+.build/release/luxicon-mcp listen          # prints a pairing token
+# iPhone: My Voice → Mac sync → enter the token
+```
+
+Transcripts you push (or every new one, with auto-push) land in `~/Luxicon`
+as JSON, ready for the MCP server. Connections are TLS-PSK on your local
+network; see [docs/sync.md](docs/sync.md) for pairing details and
+troubleshooting.
 
 ### Tests
 
@@ -106,9 +135,19 @@ asks first.
 ## Privacy posture
 
 - Audio, transcripts, and voice fingerprints are stored in the app's Documents
-  container on-device, nowhere else.
-- The only network traffic is the one-time model download from Hugging Face.
-- Export is explicit: nothing leaves the device until you share a transcript.
+  container on-device. They are included in your normal iPhone backup
+  (encrypted by Apple; end-to-end if you use Advanced Data Protection) — so a
+  restored phone keeps your library.
+- Out of the box, the only network traffic is the model download from
+  Hugging Face (no user data attached).
+- Two **opt-in** features create additional traffic, both under your control:
+  - **Mac sync** — when you pair a Mac, transcripts and summaries you push
+    (or all new ones, if you enable auto-push) travel over your local network
+    to that Mac, encrypted with a key derived from the pairing token. Nothing
+    goes to the internet. See [docs/sync.md](docs/sync.md).
+  - **Vocabulary URL sync** — when you configure a vocabulary URL, the app
+    fetches it (https only) when opened.
+- Export is explicit: you choose what leaves the device, and when.
 
 ## License
 
