@@ -138,6 +138,32 @@ record.
 
 ## TestFlight — What to Test (per-build notes, 4000 chars max)
 
+### Build 6
+
+New since build 5 — please exercise:
+
+(1) Mac sync end-to-end: install the Mac listener (one double-click — grab
+LuxiconListener.pkg from the repo's Releases page), pair with the token, and
+push a session. Every session row now shows its sync state, and the session
+screen has a Mac Sync section with the exact error and a Retry button when a
+push fails. Try pushing with the Mac asleep: it should fail with a clear
+message within ~10 seconds, never hang, and retry when you reopen the app.
+(2) Interruptions: take a phone call mid-recording — the record screen shows
+a paused banner and keeps recording after the call. Everything said after
+the call must be in the transcript.
+(3) Per-person context: add a couple of sentences about a teammate on their
+page (and about yourself in My Voice), then Regenerate Summary on a session
+— the summary should read as better-informed, and headlines are now short
+topic lists without names.
+(4) People sync/import: point My Voice → People sync at a people JSON file
+(or use Import People) — syncing adds and updates people but never removes
+anyone.
+(5) First-run basics still matter: deny the mic permission and try to record
+(should show a friendly Settings pointer, not crash); decline Local Network
+on the first push and check the error explains where to fix it.
+
+### Build 5 and earlier
+
 To test: (1) Add a person, then enroll your voice under My Voice (~15
 seconds of reading aloud) so transcripts label speakers by name. (2) Record
 a short conversation — the FIRST transcription downloads ~700 MB of speech
