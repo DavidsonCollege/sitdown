@@ -99,7 +99,8 @@ public struct MeetingTranscript: Codable, Sendable, Equatable {
 /// LLM-generated summary of one session — stored beside the transcript,
 /// never mixed into the transcript export.
 public struct SessionSummary: Codable, Sendable, Equatable {
-    /// One line (≤ ~8 words) labeling the meeting in lists.
+    /// Comma-separated topics covered (≤ 120 chars) labeling the meeting in
+    /// lists — no names; the session already hangs off a person.
     public var headline: String
     /// Longer markdown summary (topics, decisions, action items).
     public var overview: String

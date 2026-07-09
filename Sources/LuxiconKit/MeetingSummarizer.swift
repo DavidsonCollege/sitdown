@@ -41,7 +41,7 @@ public final class MeetingSummarizer {
     specific; use only what the transcript says; never invent details. \
     Respond in exactly this format:
 
-    HEADLINE: <at most 8 words naming what this meeting was about>
+    HEADLINE: <topics covered, comma-separated, under 120 characters — no people's names>
     SUMMARY:
     <markdown with these bolded sections, using "- " bullets, no # headings>
     **Overview** — 2-3 sentences.
@@ -98,8 +98,8 @@ public final class MeetingSummarizer {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        if headline.count > 90 {
-            headline = String(headline.prefix(87)) + "…"
+        if headline.count > 120 {
+            headline = String(headline.prefix(117)) + "…"
         }
         if overview.isEmpty { overview = trimmed }
         return (headline, overview)

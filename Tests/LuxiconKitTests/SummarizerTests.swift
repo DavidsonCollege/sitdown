@@ -23,8 +23,14 @@ import Foundation
     @Test func truncatesRunawayHeadline() {
         let long = "HEADLINE: " + String(repeating: "word ", count: 40) + "\nSUMMARY:\nBody."
         let result = MeetingSummarizer.parse(long, fallbackTitle: "t")
-        #expect(result.headline.count <= 90)
+        #expect(result.headline.count <= 120)
         #expect(result.overview == "Body.")
+    }
+
+    @Test func headlineInstructionAsksForTopicsWithoutNames() {
+        #expect(MeetingSummarizer.systemPrompt.contains("topics"))
+        #expect(MeetingSummarizer.systemPrompt.contains("120"))
+        #expect(MeetingSummarizer.systemPrompt.contains("no people's names"))
     }
 
     @Test func clipKeepsHeadAndTail() {
