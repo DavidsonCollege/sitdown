@@ -7,6 +7,7 @@ struct PeopleListView: View {
     @State private var showingAddPerson = false
 
     var body: some View {
+        @Bindable var coordinator = NavigationCoordinator.shared
         NavigationStack {
             Group {
                 if store.people.isEmpty {
@@ -86,6 +87,10 @@ struct PeopleListView: View {
                 Button("Cancel", role: .cancel) { newPersonName = "" }
             } message: {
                 Text("Who do you hold 1-on-1s with?")
+            }
+            // Siri / Action button: "Start a 1-on-1 with Josh" lands here.
+            .fullScreenCover(item: $coordinator.recordPerson) { person in
+                RecordSheetView(person: person)
             }
         }
     }

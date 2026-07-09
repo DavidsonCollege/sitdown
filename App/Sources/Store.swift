@@ -57,6 +57,14 @@ final class Store {
     static let storeURL = documentsURL.appendingPathComponent("store.json")
     static let audioDirURL = documentsURL.appendingPathComponent("audio", isDirectory: true)
 
+    /// Read the people list without constructing a Store (no recovery side
+    /// effects) — used by App Intents entity queries.
+    static func peekPeople() -> [Person] {
+        guard let data = try? Data(contentsOf: storeURL),
+              let persisted = try? JSONDecoder().decode(Persisted.self, from: data) else { return [] }
+        return persisted.people
+    }
+
     init() {
         try? FileManager.default.createDirectory(at: Self.audioDirURL, withIntermediateDirectories: true)
         load()
