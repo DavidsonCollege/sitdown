@@ -10,9 +10,11 @@ let package = Package(
     products: [
         .library(name: "LuxiconKit", targets: ["LuxiconKit"]),
         .executable(name: "luxicon-cli", targets: ["LuxiconCLI"]),
+        .executable(name: "luxicon-mcp", targets: ["LuxiconMCP"]),
     ],
     dependencies: [
         .package(url: "https://github.com/soniqo/speech-swift.git", from: "0.0.21"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
     ],
     targets: [
         .target(
@@ -29,6 +31,13 @@ let package = Package(
         .executableTarget(
             name: "LuxiconCLI",
             dependencies: ["LuxiconKit"]
+        ),
+        .executableTarget(
+            name: "LuxiconMCP",
+            dependencies: [
+                "LuxiconKit",
+                .product(name: "MCP", package: "swift-sdk"),
+            ]
         ),
         .testTarget(
             name: "LuxiconKitTests",

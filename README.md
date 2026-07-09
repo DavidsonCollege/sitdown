@@ -42,6 +42,7 @@ Sources/LuxiconKit/     Core pipeline (platform-neutral Swift package)
   Models.swift            transcript, turns, stats, enrollment types
   Export.swift            markdown + JSON export
 Sources/LuxiconCLI/     macOS command-line harness
+Sources/LuxiconMCP/     MCP server over a local transcript library
 App/                    iOS app (SwiftUI, generated with xcodegen)
 ```
 
@@ -71,6 +72,23 @@ bash scripts/build_mlx_metallib.sh debug   # compile MLX Metal shaders
 ```
 
 First run may require the Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`.
+
+### MCP server (query transcripts from Claude)
+
+`luxicon-mcp` serves a local folder of Luxicon exports to MCP clients
+(Claude Desktop, Claude Code) over stdio — retrieval only; the reasoning is
+the client's job. Export sessions from the app (per-session JSON or a
+person's Full History JSON) into `~/Luxicon` (or pass `--library <dir>`;
+subfolder names label sessions that lack a person).
+
+```bash
+swift build -c release
+claude mcp add luxicon -- "$PWD/.build/release/luxicon-mcp"
+```
+
+Tools: `list_people`, `list_sessions`, `get_transcript`,
+`search_transcripts`, `talk_time_trends`. The library is re-scanned on every
+call, so newly AirDropped exports appear immediately.
 
 ### Tests
 
