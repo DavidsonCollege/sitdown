@@ -39,6 +39,8 @@ extension Store {
         let sessionId = s.id
         let audioURL = audioURL(for: s)
         let enrollments = enrollments
+        let vocabulary = vocabulary
+        let engine = asrEngine
         let personName = person(id: s.personId)?.name
 
         let task = Task {
@@ -48,7 +50,9 @@ extension Store {
                     audio: audio,
                     title: s.title,
                     date: s.date,
-                    enrollments: enrollments
+                    enrollments: enrollments,
+                    vocabulary: vocabulary,
+                    engine: engine
                 ) { fraction, stage in
                     Task { @MainActor in
                         self.processing.bySession[sessionId] = .init(fraction: fraction, stage: stage)

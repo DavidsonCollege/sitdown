@@ -24,6 +24,8 @@ struct SitdownCLI {
               --enroll Name=voice.wav   enroll a known voice (repeatable)
               --out <dir>               write transcript.md + transcript.json here
               --title <title>           meeting title (default: file name)
+              --vocab "a, b, c"         names/terms to ground transcription in
+              --engine parakeet|qwen3   ASR engine (qwen3 supports --vocab context injection)
             """)
             return
         }
@@ -32,6 +34,8 @@ struct SitdownCLI {
         var enrollSpecs: [(String, String)] = []
         var outDir: String?
         var title: String?
+        var vocabulary: [String] = []
+        var engine: ASREngine = .parakeet
         var i = 0
         while i < args.count {
             switch args[i] {
@@ -44,13 +48,24 @@ struct SitdownCLI {
                 i += 2
             case "--out": outDir = args[i + 1]; i += 2
             case "--title": title = args[i + 1]; i += 2
+            case "--vocab":
+                vocabulary += args[i + 1].split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                i += 2
+            case "--engine":
+                guard let parsed = ASREngine(rawValue: args[i + 1]) else {
+                    throw ValidationError("--engine expects parakeet or qwen3")
+                }
+                engine = parsed
+                i += 2
             default: throw ValidationError("unknown option \(args[i])")
             }
         }
 
         let sr = MeetingPipeline.sampleRate
-        print("Loading models (downloads on first run)...")
-        let pipeline = try await MeetingPipeline.load { p, stage in
+        print("Loading models (downloads on first run, engine: \(engine.rawValue))...")
+        let pipeline = try await MeetingPipeline.load(engine: engine) { p, stage in
             print(String(format: "  [%3.0f%%] %@", p * 100, stage))
         }
 

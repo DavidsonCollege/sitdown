@@ -39,12 +39,18 @@ final class Store {
     var myName: String = "Me"
     /// Speaker embedding of the user's enrolled voice, if enrolled.
     var myVoiceEmbedding: [Float]?
+    /// User-defined terms (jargon, project names) to ground transcription in.
+    var customVocabulary: [String] = []
+    /// Which ASR engine transcribes turns.
+    var asrEngine: ASREngine = .parakeet
 
     private struct Persisted: Codable {
         var people: [Person]
         var sessions: [SessionRecord]
         var myName: String
         var myVoiceEmbedding: [Float]?
+        var customVocabulary: [String]?
+        var asrEngine: ASREngine?
     }
 
     static let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -68,12 +74,15 @@ final class Store {
         sessions = persisted.sessions
         myName = persisted.myName
         myVoiceEmbedding = persisted.myVoiceEmbedding
+        customVocabulary = persisted.customVocabulary ?? []
+        asrEngine = persisted.asrEngine ?? .parakeet
     }
 
     func save() {
         let persisted = Persisted(
             people: people, sessions: sessions,
-            myName: myName, myVoiceEmbedding: myVoiceEmbedding
+            myName: myName, myVoiceEmbedding: myVoiceEmbedding,
+            customVocabulary: customVocabulary, asrEngine: asrEngine
         )
         if let data = try? JSONEncoder().encode(persisted) {
             try? data.write(to: Self.storeURL, options: .atomic)
@@ -119,6 +128,13 @@ final class Store {
     var enrollments: [VoiceEnrollment] {
         guard let emb = myVoiceEmbedding else { return [] }
         return [VoiceEnrollment(name: myName, embedding: emb)]
+    }
+
+    /// Terms likely to occur in any session: everyone's names + custom glossary.
+    var vocabulary: [String] {
+        var terms = people.map(\.name) + customVocabulary
+        if myName != "Me" { terms.append(myName) }
+        return terms
     }
 
     // MARK: - In-progress recording (crash recovery)

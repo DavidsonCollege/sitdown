@@ -10,6 +10,7 @@ struct MyVoiceView: View {
     @State private var isRecording = false
     @State private var isEmbedding = false
     @State private var errorMessage: String?
+    @State private var newTerm = ""
 
     private static let minSeconds: Double = 8
 
@@ -60,6 +61,38 @@ struct MyVoiceView: View {
                 Text("Read anything aloud for ~15 seconds — a paragraph from a book works well. Sitdown stores only a voice fingerprint (256 numbers), not the audio. With your voice enrolled, 1-on-1 transcripts label you and the other person automatically.")
             }
 
+            Section {
+                ForEach(store.customVocabulary, id: \.self) { term in
+                    Text(term)
+                }
+                .onDelete { offsets in
+                    store.customVocabulary.remove(atOffsets: offsets)
+                    store.save()
+                }
+                HStack {
+                    TextField("Add a name or term", text: $newTerm)
+                        .onSubmit { addTerm() }
+                    Button("Add") { addTerm() }
+                        .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Vocabulary")
+            } footer: {
+                Text("Project names, acronyms, jargon — words transcription tends to get wrong. Your name and your people's names are included automatically.")
+            }
+
+            Section {
+                Picker("Engine", selection: $store.asrEngine) {
+                    Text("Parakeet (recommended)").tag(ASREngine.parakeet)
+                    Text("Qwen3 (experimental)").tag(ASREngine.qwen3)
+                }
+                .onChange(of: store.asrEngine) { store.save() }
+            } header: {
+                Text("Transcription engine")
+            } footer: {
+                Text("Parakeet is fast and battery-friendly; vocabulary is applied as a correction pass. Qwen3 injects your vocabulary directly into the recognizer (better on unusual names) but downloads ~400 MB more and runs slower.")
+            }
+
             if let errorMessage {
                 Text(errorMessage).foregroundStyle(.red).font(.footnote)
             }
@@ -69,6 +102,14 @@ struct MyVoiceView: View {
             if isRecording { _ = recorder.stop() }
             store.save()
         }
+    }
+
+    private func addTerm() {
+        let term = newTerm.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty, !store.customVocabulary.contains(term) else { return }
+        store.customVocabulary.append(term)
+        store.save()
+        newTerm = ""
     }
 
     private func startEnrollment() {

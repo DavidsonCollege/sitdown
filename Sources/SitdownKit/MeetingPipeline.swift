@@ -2,6 +2,41 @@ import Foundation
 import AudioCommon
 import SpeechVAD
 import ParakeetASR
+import Qwen3ASR
+
+/// One speaker turn's worth of transcription, engine-agnostic.
+public protocol TurnTranscriber: AnyObject {
+    /// Whether `context` is honored (decoder-level vocabulary biasing).
+    var supportsContext: Bool { get }
+    func transcribeTurn(_ audio: [Float], sampleRate: Int, context: String?) -> TranscriptionResult
+}
+
+/// Parakeet TDT (CoreML, Neural Engine). Fast and battery-friendly; no
+/// context biasing — vocabulary grounding happens post-ASR.
+extension ParakeetASRModel: TurnTranscriber {
+    public var supportsContext: Bool { false }
+    public func transcribeTurn(_ audio: [Float], sampleRate: Int, context: String?) -> TranscriptionResult {
+        transcribeWithLanguage(audio: audio, sampleRate: sampleRate, language: nil)
+    }
+}
+
+/// Qwen3-ASR (MLX, GPU). Accepts a context prompt for true decoder-level
+/// vocabulary biasing. Heavier than Parakeet; foreground-only.
+extension Qwen3ASRModel: TurnTranscriber {
+    public var supportsContext: Bool { true }
+    public func transcribeTurn(_ audio: [Float], sampleRate: Int, context: String?) -> TranscriptionResult {
+        let text = transcribe(audio: audio, sampleRate: sampleRate, context: context)
+        return TranscriptionResult(text: text)
+    }
+}
+
+/// Which ASR engine transcribes speaker turns.
+public enum ASREngine: String, Codable, Sendable, CaseIterable {
+    /// Parakeet TDT — CoreML/ANE, fast, the default.
+    case parakeet
+    /// Qwen3-ASR 0.6B 4-bit — MLX/GPU, supports vocabulary context injection.
+    case qwen3
+}
 
 /// End-to-end 1-on-1 processing: diarize → per-turn transcription → speaker naming.
 ///
@@ -9,7 +44,7 @@ import ParakeetASR
 /// background task. The class is not thread-safe — use one instance per task.
 public final class MeetingPipeline {
     public let diarizer: PyannoteDiarizationPipeline
-    public let asr: ParakeetASRModel
+    public let asr: any TurnTranscriber
 
     /// Sample rate `process` expects. Load or record audio at this rate.
     public static let sampleRate = 16000
@@ -44,21 +79,30 @@ public final class MeetingPipeline {
         public static let oneOnOne = Options()
     }
 
-    public init(diarizer: PyannoteDiarizationPipeline, asr: ParakeetASRModel) {
+    public init(diarizer: PyannoteDiarizationPipeline, asr: any TurnTranscriber) {
         self.diarizer = diarizer
         self.asr = asr
     }
 
     /// Download (first run) and load both models.
     public static func load(
+        engine: ASREngine = .parakeet,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingPipeline {
         let diarizer = try await DiarizationPipeline.fromPretrained(progressHandler: { p, stage in
             progress?(p * 0.5, stage)
         })
-        let asr = try await ParakeetASRModel.fromPretrained(progressHandler: { p, stage in
-            progress?(0.5 + p * 0.5, stage)
-        })
+        let asr: any TurnTranscriber
+        switch engine {
+        case .parakeet:
+            asr = try await ParakeetASRModel.fromPretrained(progressHandler: { p, stage in
+                progress?(0.5 + p * 0.5, stage)
+            })
+        case .qwen3:
+            asr = try await Qwen3ASRModel.fromPretrained(progressHandler: { p, stage in
+                progress?(0.5 + p * 0.5, stage)
+            })
+        }
         return MeetingPipeline(diarizer: diarizer, asr: asr)
     }
 
@@ -72,12 +116,16 @@ public final class MeetingPipeline {
     /// - Parameters:
     ///   - audio: mono Float32 PCM at `MeetingPipeline.sampleRate`
     ///   - enrollments: known voices to auto-label speakers
+    ///   - vocabulary: names/terms likely to occur (participants, org jargon).
+    ///     Injected as decoder context on context-capable engines, and applied
+    ///     as a post-ASR near-miss correction on every engine.
     ///   - progress: (0–1, stage description); checked between turns for Task cancellation
     public func process(
         audio: [Float],
         title: String,
         date: Date,
         enrollments: [VoiceEnrollment] = [],
+        vocabulary: [String] = [],
         options: Options = .oneOnOne,
         progress: ((Double, String) -> Void)? = nil
     ) throws -> MeetingTranscript {
@@ -98,6 +146,7 @@ public final class MeetingPipeline {
         let turnSpans = Self.buildTurns(segments: result.segments, mergeGap: options.turnMergeGap)
 
         // 4. Transcribe each turn
+        let context = asr.supportsContext ? VocabularyCorrector.contextString(for: vocabulary) : nil
         var turns: [TranscriptTurn] = []
         turns.reserveCapacity(turnSpans.count)
         for (i, span) in turnSpans.enumerated() {
@@ -108,8 +157,9 @@ public final class MeetingPipeline {
             let hi = min(audio.count, Int((span.end + options.asrPadding) * Double(sr)))
             guard hi > lo else { continue }
             let slice = Array(audio[lo..<hi])
-            let asrResult = asr.transcribeWithLanguage(audio: slice, sampleRate: sr, language: nil)
-            let text = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let asrResult = asr.transcribeTurn(slice, sampleRate: sr, context: context)
+            var text = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = VocabularyCorrector.correct(text, vocabulary: vocabulary)
             guard !text.isEmpty else { continue }
             turns.append(TranscriptTurn(
                 id: turns.count,
