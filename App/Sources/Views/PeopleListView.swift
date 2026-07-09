@@ -39,12 +39,15 @@ struct PeopleListView: View {
                         }
                         ForEach(store.people) { person in
                             NavigationLink(value: Route.person(person)) {
-                                VStack(alignment: .leading) {
-                                    Text(person.name).font(.headline)
-                                    let count = store.sessions(for: person).count
-                                    Text("^[\(count) session](inflect: true)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                HStack(spacing: 12) {
+                                    AvatarView(fileName: person.photoFileName, name: person.name)
+                                    VStack(alignment: .leading) {
+                                        Text(person.name).font(.headline)
+                                        let count = store.sessions(for: person).count
+                                        Text("^[\(count) session](inflect: true)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }

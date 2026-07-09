@@ -14,6 +14,21 @@ struct PersonDetailView: View {
         let sessions = store.sessions(for: person)
         List {
             Section {
+                // Route values carry a stale Person copy; read the photo from
+                // the store so a fresh pick shows up immediately.
+                AvatarPicker(
+                    fileName: store.person(id: person.id)?.photoFileName,
+                    name: person.name,
+                    size: 88
+                ) { data in
+                    store.setPhoto(data, for: person.id)
+                }
+                .frame(maxWidth: .infinity)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
+            Section {
                 Button {
                     showingRecorder = true
                 } label: {

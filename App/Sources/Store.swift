@@ -6,6 +6,8 @@ import LuxiconKit
 struct Person: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
+    /// Profile picture file in `Store.photosDirURL`, if one has been set.
+    var photoFileName: String?
 }
 
 /// One recorded 1-on-1.
@@ -39,6 +41,8 @@ final class Store {
     var sessions: [SessionRecord] = []
     /// Display name the user goes by (used to label their own turns).
     var myName: String = "Me"
+    /// The user's own profile picture file in `photosDirURL`, if set.
+    var myPhotoFileName: String?
     /// Speaker embedding of the user's enrolled voice, if enrolled.
     var myVoiceEmbedding: [Float]?
     /// User-defined terms (jargon, project names) to ground transcription in.
@@ -73,6 +77,7 @@ final class Store {
         var people: [Person]
         var sessions: [SessionRecord]
         var myName: String
+        var myPhotoFileName: String?
         var myVoiceEmbedding: [Float]?
         /// Pre-0.1.0(4) plain-string vocabulary; migrated to `vocabularyEntries`.
         var customVocabulary: [String]?
@@ -90,6 +95,7 @@ final class Store {
     static let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     static let storeURL = documentsURL.appendingPathComponent("store.json")
     static let audioDirURL = documentsURL.appendingPathComponent("audio", isDirectory: true)
+    static let photosDirURL = documentsURL.appendingPathComponent("photos", isDirectory: true)
 
     /// Read the people list without constructing a Store (no recovery side
     /// effects) — used by App Intents entity queries.
@@ -101,6 +107,7 @@ final class Store {
 
     init() {
         try? FileManager.default.createDirectory(at: Self.audioDirURL, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: Self.photosDirURL, withIntermediateDirectories: true)
         load()
         // Recover sessions stuck mid-processing by an app kill.
         for i in sessions.indices where sessions[i].status == .processing {
@@ -115,6 +122,7 @@ final class Store {
         people = persisted.people
         sessions = persisted.sessions
         myName = persisted.myName
+        myPhotoFileName = persisted.myPhotoFileName
         myVoiceEmbedding = persisted.myVoiceEmbedding
         vocabularyEntries = persisted.vocabularyEntries
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
@@ -131,7 +139,8 @@ final class Store {
     func save() {
         let persisted = Persisted(
             people: people, sessions: sessions,
-            myName: myName, myVoiceEmbedding: myVoiceEmbedding,
+            myName: myName, myPhotoFileName: myPhotoFileName,
+            myVoiceEmbedding: myVoiceEmbedding,
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
             asrEngine: asrEngine,
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
@@ -179,8 +188,50 @@ final class Store {
 
     func deletePerson(_ person: Person) {
         for s in sessions(for: person) { deleteSession(s) }
+        if let current = self.person(id: person.id) {
+            removePhotoFile(current.photoFileName)
+        }
         people.removeAll { $0.id == person.id }
         save()
+    }
+
+    // MARK: - Profile photos (aesthetic only)
+
+    static func photoURL(fileName: String) -> URL {
+        photosDirURL.appendingPathComponent(fileName)
+    }
+
+    /// Set or clear (`nil`) a person's profile picture. `data` should already
+    /// be encoded image data (see AvatarView's downscaling picker).
+    func setPhoto(_ data: Data?, for personId: UUID) {
+        guard let i = people.firstIndex(where: { $0.id == personId }) else { return }
+        people[i].photoFileName = replacePhotoFile(old: people[i].photoFileName, with: data)
+        save()
+    }
+
+    /// Set or clear (`nil`) the user's own profile picture.
+    func setMyPhoto(_ data: Data?) {
+        myPhotoFileName = replacePhotoFile(old: myPhotoFileName, with: data)
+        save()
+    }
+
+    /// Each photo gets a fresh filename so SwiftUI image caches can never
+    /// show a stale picture. Returns the new filename, or nil when clearing.
+    private func replacePhotoFile(old: String?, with data: Data?) -> String? {
+        removePhotoFile(old)
+        guard let data else { return nil }
+        let fileName = "\(UUID().uuidString).jpg"
+        do {
+            try data.write(to: Self.photoURL(fileName: fileName), options: .atomic)
+            return fileName
+        } catch {
+            return nil
+        }
+    }
+
+    private func removePhotoFile(_ fileName: String?) {
+        guard let fileName else { return }
+        try? FileManager.default.removeItem(at: Self.photoURL(fileName: fileName))
     }
 
     var enrollments: [VoiceEnrollment] {

@@ -21,8 +21,13 @@ struct MyVoiceView: View {
         @Bindable var store = store
         Form {
             Section("Your name") {
-                TextField("Name shown in transcripts", text: $store.myName)
-                    .onSubmit { store.save() }
+                HStack(spacing: 12) {
+                    AvatarPicker(fileName: store.myPhotoFileName, name: store.myName) { data in
+                        store.setMyPhoto(data)
+                    }
+                    TextField("Name shown in transcripts", text: $store.myName)
+                        .onSubmit { store.save() }
+                }
             }
 
             Section {
