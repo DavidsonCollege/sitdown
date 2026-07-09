@@ -53,12 +53,21 @@ HANDS-FREE START
 "Start a one on one with Josh" works from Siri, the Shortcuts app, or the
 Action button — Luxicon opens directly into the record screen.
 
+SEND TRANSCRIPTS TO YOUR MAC
+Pair once with the bundled Mac listener and every finished 1-on-1 can land
+on your Mac automatically — over your local network, encrypted end to end,
+ready for Claude or any MCP-capable assistant to search and summarize. No
+cloud in between.
+
 PRIVATE BY ARCHITECTURE
 All speech processing runs on the Apple Neural Engine and GPU in your
-iPhone. The only network traffic is a one-time download of the speech models
-(about 700 MB, on first transcription). After that, Luxicon works in
-airplane mode. Recordings, transcripts, and voice fingerprints live in the
-app's private storage and nowhere else.
+iPhone. Aside from a one-time download of the speech models, Luxicon makes
+no network connections unless you turn them on: pair a Mac and it can send
+transcripts to that Mac over your own Wi-Fi (encrypted, never the
+internet); point it at a vocabulary file URL and it will fetch that file.
+Otherwise it works in airplane mode. Recordings, transcripts, and voice
+fingerprints stay in the app's private on-device storage and your own
+iPhone backup.
 
 RECORD RESPONSIBLY
 Recording a conversation requires consent — in many places, from everyone in
@@ -82,13 +91,18 @@ Primary: Business · Secondary: Productivity
 
 ## App Privacy (nutrition label)
 - Data collection: **Data Not Collected** — the app has no analytics, no
-  accounts, no third-party SDKs, and makes no network requests except the
-  Hugging Face model download (which sends no user data).
+  accounts, and no third-party services; the developer receives nothing.
+- Network use: the Hugging Face model download (no user data), plus two
+  opt-in, user-configured connections: Mac sync on the local network and
+  vocabulary fetches from a user-supplied https URL.
 - Microphone: used to record meetings the user explicitly starts; audio is
   processed and stored on-device only.
 
 ## Support URL
 https://github.com/DavidsonCollege/luxicon
+
+## Privacy Policy URL
+https://github.com/DavidsonCollege/luxicon/blob/main/docs/privacy-policy.md
 
 ## Copyright
 © 2026 Davidson College
