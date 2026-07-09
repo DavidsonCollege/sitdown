@@ -22,6 +22,64 @@ without AirDrop round-trips.
 3. Optional: toggle **Push automatically after each 1-on-1**, or use
    **Push All to Mac** from a person's share menu.
 
+## Run the listener automatically at login
+
+A LaunchAgent keeps the listener alive so you never have to remember a
+terminal window. Install the binary somewhere stable first — pointing
+launchd into `.build/` breaks the next time `swift package clean` runs:
+
+```bash
+swift build -c release
+mkdir -p ~/bin && install .build/release/luxicon-mcp ~/bin/
+```
+
+Save this as `~/Library/LaunchAgents/edu.davidson.luxicon.listener.plist`,
+replacing `YOURUSER` with your username:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>edu.davidson.luxicon.listener</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/YOURUSER/bin/luxicon-mcp</string>
+		<string>listen</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/YOURUSER/Library/Logs/luxicon-listener.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/YOURUSER/Library/Logs/luxicon-listener.log</string>
+</dict>
+</plist>
+```
+
+Then load it (starts at login from now on, restarts if it dies):
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/edu.davidson.luxicon.listener.plist
+```
+
+Verify with `lsof -nP -i :51234` (should show `luxicon-m … LISTEN`). Note
+that the startup banner may not appear in the log immediately — stdout is
+buffered when not attached to a terminal — so read the pairing token from
+the file instead: `cat ~/Luxicon/.sync-token`.
+
+Housekeeping:
+
+- After pulling new code, rebuild and re-run the `install` command, then
+  `launchctl kickstart -k gui/$(id -u)/edu.davidson.luxicon.listener` to
+  restart on the new binary.
+- To stop it: `launchctl bootout gui/$(id -u)/edu.davidson.luxicon.listener`.
+- The listener prints the pairing token at startup, so the log file is as
+  sensitive as `.sync-token` — both are readable only by your account.
+
 ## When the Mac isn't found
 
 Enterprise Wi-Fi often blocks mDNS/Bonjour. The listener prints its IP
