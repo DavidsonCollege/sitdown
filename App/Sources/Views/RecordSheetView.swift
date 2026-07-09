@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import LuxiconKit
 
 /// Full-screen recording UI with live caption preview.
@@ -16,6 +17,7 @@ struct RecordSheetView: View {
     @State private var captioner = LiveCaptioner()
     @State private var startError: String?
     @State private var saving = false
+    @State private var confirmingDiscard = false
 
     var body: some View {
         NavigationStack {
@@ -38,6 +40,18 @@ struct RecordSheetView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal)
+
+                    if recorder.isInterrupted {
+                        Label("Recording paused by another audio session — it resumes automatically when the call ends.",
+                              systemImage: "pause.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal)
+                    }
+                    if let runtimeError = recorder.runtimeError {
+                        Text(runtimeError).font(.footnote).foregroundStyle(.red)
+                            .padding(.horizontal)
+                    }
 
                     if let startError {
                         Text(startError).font(.footnote).foregroundStyle(.red)
@@ -62,10 +76,17 @@ struct RecordSheetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Discard") { discard() }
+                    Button("Discard") { confirmingDiscard = true }
                 }
             }
             .interactiveDismissDisabled()
+            .confirmationDialog(
+                "Discard this recording?", isPresented: $confirmingDiscard, titleVisibility: .visible
+            ) {
+                Button("Discard Recording", role: .destructive) { discard() }
+            } message: {
+                Text("The audio cannot be recovered.")
+            }
             .onAppear { begin() }
             .onDisappear { store.setRecordingActive(false) }
         }
@@ -107,15 +128,22 @@ struct RecordSheetView: View {
     }
 
     private func begin() {
-        do {
-            let fileURL = try store.beginRecording(id: sessionId, person: person)
-            recorder.onSamples = captioner.feed
-            try recorder.start(writingTo: fileURL)
-            store.setRecordingActive(true)
-            captioner.start()
-            RecordingActivityController.shared.start(personName: person.name)
-        } catch {
-            startError = "Could not start recording: \(error.localizedDescription)"
+        Task {
+            let granted = await AVAudioApplication.requestRecordPermission()
+            guard granted else {
+                startError = RecorderError.microphoneAccessDenied.errorDescription
+                return
+            }
+            do {
+                let fileURL = try store.beginRecording(id: sessionId, person: person)
+                recorder.onSamples = captioner.feed
+                try recorder.start(writingTo: fileURL)
+                store.setRecordingActive(true)
+                captioner.start()
+                RecordingActivityController.shared.start(personName: person.name)
+            } catch {
+                startError = "Could not start recording: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -129,11 +157,13 @@ struct RecordSheetView: View {
 
     private func stopAndSave() {
         saving = true
-        let samples = recorder.stop()
+        // Duration comes from the tally: file-backed recordings no longer
+        // keep samples in memory, so stop() returns [] here.
+        let duration = recorder.duration
+        _ = recorder.stop()
         captioner.stop()
         RecordingActivityController.shared.end()
         do {
-            let duration = Double(samples.count) / Double(Recorder.sampleRate)
             let session = try store.finishRecording(id: sessionId, duration: duration)
             store.startProcessing(session)
             dismiss()

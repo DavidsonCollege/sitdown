@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import LuxiconKit
 
 /// Enroll the user's own voice so their turns are auto-labeled in every transcript.
@@ -260,11 +261,18 @@ struct MyVoiceView: View {
 
     private func startEnrollment() {
         errorMessage = nil
-        do {
-            try recorder.start()
-            isRecording = true
-        } catch {
-            errorMessage = "Could not start recording: \(error.localizedDescription)"
+        Task {
+            let granted = await AVAudioApplication.requestRecordPermission()
+            guard granted else {
+                errorMessage = RecorderError.microphoneAccessDenied.errorDescription
+                return
+            }
+            do {
+                try recorder.start()
+                isRecording = true
+            } catch {
+                errorMessage = "Could not start recording: \(error.localizedDescription)"
+            }
         }
     }
 

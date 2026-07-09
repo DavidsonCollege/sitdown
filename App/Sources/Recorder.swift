@@ -2,19 +2,45 @@ import Foundation
 import AVFoundation
 import LuxiconKit
 
+enum RecorderError: LocalizedError {
+    case microphoneAccessDenied
+    case microphoneUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .microphoneAccessDenied:
+            return "Microphone access is off for Luxicon. Turn it on in Settings → Privacy & Security → Microphone."
+        case .microphoneUnavailable:
+            return "The microphone is unavailable right now."
+        }
+    }
+}
+
 /// Captures microphone audio as 16 kHz mono Float32 (the pipeline's input format).
 ///
-/// When started with a URL, samples are also streamed to disk as they arrive,
-/// so a crash mid-recording loses at most the last audio chunk — the file is
-/// recoverable via `WAVFile.repairHeader`. Sample accumulation happens on the
-/// audio render thread behind a lock; UI reads `level`/`duration` by polling.
+/// When started with a URL, samples stream to disk as they arrive and are NOT
+/// kept in memory (a 3-hour meeting would be ~700 MB of Float32); a crash
+/// mid-recording loses at most the last chunk — the file is recoverable via
+/// `WAVFile.repairHeader`. Without a URL (voice enrollment), samples accumulate
+/// in memory and `stop()` returns them.
+///
+/// Interruptions (phone call, Siri) pause capture; the recorder resumes
+/// automatically when the session is handed back and exposes `isInterrupted`
+/// so the UI can say so. Write failures (disk full) surface via `runtimeError`
+/// instead of being silently swallowed.
 final class Recorder: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let lock = NSLock()
     private var buffer: [Float] = []
+    private var sampleTally = 0
     private var converter: AVAudioConverter?
     private var writer: WAVFileWriter?
+    private var fileURL: URL?
+    private var runtimeErrorStorage: String?
+    private var observers: [NSObjectProtocol] = []
     private(set) var isRecording = false
+    /// True while another audio session (phone call, Siri) holds the mic.
+    private(set) var isInterrupted = false
 
     /// Called on the audio thread with each converted 16 kHz chunk
     /// (e.g. to feed live transcription). Set before `start`.
@@ -31,7 +57,13 @@ final class Recorder: @unchecked Sendable {
 
     var duration: TimeInterval {
         lock.lock(); defer { lock.unlock() }
-        return Double(buffer.count) / Double(Self.sampleRate)
+        return Double(sampleTally) / Double(Self.sampleRate)
+    }
+
+    /// First capture/write failure, for the UI. Nil while healthy.
+    var runtimeError: String? {
+        lock.lock(); defer { lock.unlock() }
+        return runtimeErrorStorage
     }
 
     /// RMS level of the most recent chunk, 0–1, for a meter.
@@ -43,43 +75,148 @@ final class Recorder: @unchecked Sendable {
         guard !isRecording else { return }
 
         #if os(iOS)
+        guard AVAudioApplication.shared.recordPermission != .denied else {
+            throw RecorderError.microphoneAccessDenied
+        }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .default)
         try session.setActive(true)
         #endif
 
+        // Create the writer before taking the lock: a throw while the lock is
+        // held would deadlock every UI poll of `duration`.
+        let newWriter = try fileURL.map { try WAVFileWriter(url: $0, sampleRate: Self.sampleRate) }
         lock.lock()
         buffer.removeAll()
-        writer = try fileURL.map { try WAVFileWriter(url: $0, sampleRate: Self.sampleRate) }
+        sampleTally = 0
+        writer = newWriter
+        self.fileURL = fileURL
+        runtimeErrorStorage = nil
         lock.unlock()
 
-        let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
-        self.converter = converter
+        try startEngine()
+        isRecording = true
+        isInterrupted = false
+        installObservers()
+    }
 
+    /// Stop, finalize the on-disk file (if any), and return the in-memory
+    /// samples (enrollment recordings only; file-backed recordings return []).
+    func stop() -> [Float] {
+        guard isRecording else { return [] }
+        removeObservers()
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        isRecording = false
+        isInterrupted = false
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+        lock.lock(); defer { lock.unlock() }
+        do {
+            try writer?.finalize()
+        } catch {
+            // Finalize failed (disk full?): the header still claims 0 samples.
+            // Patch it from the file size so the captured audio survives.
+            if let fileURL {
+                try? WAVFile.repairHeader(url: fileURL, sampleRate: Self.sampleRate)
+            }
+        }
+        writer = nil
+        fileURL = nil
+        return buffer
+    }
+
+    // MARK: - Engine lifecycle
+
+    /// (Re)wire the tap and start the engine. Reads the CURRENT input format,
+    /// so it is also the recovery path after route/configuration changes.
+    private func startEngine() throws {
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        let inputFormat = input.outputFormat(forBus: 0)
+        // A denied/lost mic reports the invalid 0 Hz format; installing a tap
+        // with it raises an uncatchable NSException — bail out first.
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw RecorderError.microphoneUnavailable
+        }
+        converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] pcmBuffer, _ in
             self?.consume(pcmBuffer)
         }
         engine.prepare()
         try engine.start()
-        isRecording = true
     }
 
-    /// Stop, finalize the on-disk file (if any), and return everything captured.
-    func stop() -> [Float] {
-        guard isRecording else { return [] }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        isRecording = false
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        #endif
-        lock.lock(); defer { lock.unlock() }
-        try? writer?.finalize()
-        writer = nil
-        return buffer
+    private func resumeCapture() {
+        guard isRecording, !engine.isRunning else { return }
+        do {
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            try startEngine()
+            isInterrupted = false
+        } catch {
+            setRuntimeError("Recording paused and could not resume: \(error.localizedDescription). Stop to save what was captured.")
+        }
     }
+
+    private func setRuntimeError(_ message: String) {
+        lock.lock()
+        if runtimeErrorStorage == nil { runtimeErrorStorage = message }
+        lock.unlock()
+    }
+
+    // MARK: - Interruptions (phone call, Siri, route/config changes)
+
+    private func installObservers() {
+        let center = NotificationCenter.default
+        var installed: [NSObjectProtocol] = []
+        #if os(iOS)
+        installed.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main
+        ) { [weak self] note in
+            self?.handleInterruption(note)
+        })
+        #endif
+        installed.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine, queue: .main
+        ) { [weak self] _ in
+            // Route change (AirPods in/out): the engine stops and the input
+            // format may differ — rewire with the fresh format.
+            self?.resumeCapture()
+        })
+        observers = installed
+    }
+
+    private func removeObservers() {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers = []
+    }
+
+    #if os(iOS)
+    private func handleInterruption(_ note: Notification) {
+        guard let info = note.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+        switch type {
+        case .began:
+            isInterrupted = true
+        case .ended:
+            // Always try to resume: for a meeting recorder, silently losing
+            // the rest of the conversation is the worst outcome.
+            resumeCapture()
+        @unknown default:
+            break
+        }
+    }
+    #endif
+
+    // MARK: - Capture
 
     private func consume(_ pcmBuffer: AVAudioPCMBuffer) {
         guard let converter else { return }
@@ -107,8 +244,19 @@ final class Recorder: @unchecked Sendable {
 
         let chunk = Array(samples)
         lock.lock()
-        buffer.append(contentsOf: chunk)
-        try? writer?.append(chunk)
+        sampleTally += chunk.count
+        if writer == nil {
+            // Enrollment path: caller consumes the samples from stop().
+            buffer.append(contentsOf: chunk)
+        } else {
+            do {
+                try writer?.append(chunk)
+            } catch {
+                if runtimeErrorStorage == nil {
+                    runtimeErrorStorage = "Recording can't be written (storage full?). Stop now — audio up to this point is saved."
+                }
+            }
+        }
         lock.unlock()
 
         onSamples?(chunk)
