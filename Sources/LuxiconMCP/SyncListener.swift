@@ -11,6 +11,10 @@ import LuxiconKit
 /// overwrite, so re-pushing a session after its summary lands is idempotent.
 enum SyncListener {
     static func run(libraryURL: URL) throws -> Never {
+        // Under launchd, stdout is a file and fully buffered — the banner and
+        // "Received …" lines would sit unflushed forever. Line-buffer so the
+        // log is usable for diagnosing sync issues live.
+        setvbuf(stdout, nil, _IOLBF, 0)
         try FileManager.default.createDirectory(
             at: libraryURL, withIntermediateDirectories: true)
         let token = try loadOrCreateToken(libraryURL: libraryURL)
