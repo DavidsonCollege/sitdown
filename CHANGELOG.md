@@ -20,6 +20,15 @@ Pre-release hardening pass (QA audit 2026-07-09):
 - README/App Store copy now disclose the opt-in sync features; added
   privacy policy, sync guide, SECURITY.md.
 
+New in this build:
+
+- Session headlines are now short topic lists (no names — the session
+  already sits under a person).
+- Per-person context: a free-text field on each person (and an "About you"
+  field in My Voice) gives the summarizer background it can use.
+- People import/export and URL sync, modeled on vocabulary sync but
+  merge-only: syncing adds and updates people, never removes anyone.
+
 ## 1.0 (builds 1–5)
 
 Initial development: on-device diarized transcription, speaker enrollment,
