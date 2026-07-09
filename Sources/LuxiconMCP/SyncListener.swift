@@ -120,6 +120,10 @@ private final class PushReceiver: @unchecked Sendable {
                 connection.cancel(); return
             }
             expected = data.withUnsafeBytes { Int($0.load(as: UInt32.self).bigEndian) }
+            guard expected > 0, expected <= LuxiconSync.maxFrameBytes else {
+                print("Rejected push: declared size \(expected) bytes is out of bounds")
+                connection.cancel(); return
+            }
             readBody()
         }
     }
@@ -142,7 +146,7 @@ private final class PushReceiver: @unchecked Sendable {
         }
         let filename = LuxiconSync.sanitizedFilename(push.filename)
         do {
-            try push.payload.write(to: libraryURL.appendingPathComponent(filename))
+            try push.payload.write(to: libraryURL.appendingPathComponent(filename), options: .atomic)
             print("Received \(filename) (\(push.payload.count) bytes)")
             connection.send(
                 content: Data(LuxiconSync.ackMessage.utf8),

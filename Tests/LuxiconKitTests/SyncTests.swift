@@ -42,6 +42,11 @@ import Testing
         #expect(framed.dropFirst(4) == payload)
     }
 
+    @Test func frameCapIsSane() {
+        // The listener buffers a whole frame in RAM; the cap bounds that.
+        #expect(LuxiconSync.maxFrameBytes == 64 * 1024 * 1024)
+    }
+
     @Test func tokenIsLongAndInAlphabet() {
         let token = LuxiconSync.generateToken()
         #expect(token.count == 20)

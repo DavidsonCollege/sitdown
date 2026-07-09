@@ -21,6 +21,9 @@ public enum LuxiconSync {
     public static let ackMessage = "ok"
     /// Fixed port so the phone can connect by IP when mDNS is unavailable.
     public static let defaultPort: UInt16 = 51234
+    /// Upper bound on one framed push. The receiver buffers a whole frame in
+    /// memory, so this caps what a (paired) peer can make it allocate.
+    public static let maxFrameBytes = 64 * 1024 * 1024
 
     /// One pushed file. `payload` is the standard single-session export
     /// envelope, so the receiver can drop it straight into the library.
