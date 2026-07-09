@@ -1,4 +1,5 @@
 import SwiftUI
+import LuxiconKit
 
 /// Root screen: your direct reports.
 struct PeopleListView: View {
@@ -6,6 +7,9 @@ struct PeopleListView: View {
     @State private var newPersonName = ""
     @State private var showingAddPerson = false
     @State private var path: [Route] = []
+    @State private var peopleFileURL: URL?
+    @State private var importingPeople = false
+    @State private var importResult: String?
 
     var body: some View {
         @Bindable var coordinator = NavigationCoordinator.shared
@@ -65,7 +69,22 @@ struct PeopleListView: View {
                 case .myVoice: MyVoiceView()
                 }
             }
-            .onAppear { handleRouteArgument() }
+            .onAppear { writePeopleFile(); handleRouteArgument() }
+            .onChange(of: store.people) { writePeopleFile() }
+            .fileImporter(
+                isPresented: $importingPeople,
+                allowedContentTypes: [.json, .plainText, .text]
+            ) { result in
+                importPeople(result)
+            }
+            .alert("People Import", isPresented: Binding(
+                get: { importResult != nil },
+                set: { if !$0 { importResult = nil } }
+            )) {
+                Button("OK") { importResult = nil }
+            } message: {
+                Text(importResult ?? "")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     NavigationLink(value: Route.myVoice) {
@@ -77,6 +96,25 @@ struct PeopleListView: View {
                         showingAddPerson = true
                     } label: {
                         Image(systemName: "plus")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            importingPeople = true
+                        } label: {
+                            Label("Import People…", systemImage: "square.and.arrow.down")
+                        }
+                        if let peopleFileURL {
+                            ShareLink(item: peopleFileURL) {
+                                Label("Export People", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        ShareLink(item: PeopleJSON.agentPrompt(existing: store.peopleForExport)) {
+                            Label("Share Agent Prompt", systemImage: "sparkles")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -160,6 +198,29 @@ struct PeopleListView: View {
             }
         default:
             break
+        }
+    }
+
+    /// ShareLink needs a file URL ready before the tap.
+    private func writePeopleFile() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Luxicon People.json")
+        if let data = try? PeopleJSON.template(existing: store.peopleForExport) {
+            try? data.write(to: url)
+            peopleFileURL = url
+        }
+    }
+
+    private func importPeople(_ result: Result<URL, Error>) {
+        do {
+            let url = try result.get()
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let records = try PeopleJSON.parse(Data(contentsOf: url))
+            let (added, updated) = store.importPeople(records)
+            importResult = "Added \(added), updated \(updated). Nobody is removed by imports."
+        } catch {
+            importResult = "Import failed: \(error.localizedDescription)"
         }
     }
 }

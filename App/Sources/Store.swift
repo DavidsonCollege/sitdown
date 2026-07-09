@@ -329,6 +329,33 @@ final class Store {
         return imported.count
     }
 
+    /// Merge an imported roster by case-insensitive name: new people are
+    /// appended, matches get their context updated when the import provides
+    /// one. Never removes anyone — photos and sessions are untouched.
+    func importPeople(_ imported: [PersonImport]) -> (added: Int, updated: Int) {
+        var added = 0, updated = 0
+        for record in imported {
+            if let i = people.firstIndex(where: {
+                $0.name.caseInsensitiveCompare(record.name) == .orderedSame
+            }) {
+                if let context = record.context, people[i].context != context {
+                    people[i].context = context
+                    updated += 1
+                }
+            } else {
+                people.append(Person(name: record.name, context: record.context))
+                added += 1
+            }
+        }
+        save()
+        return (added, updated)
+    }
+
+    /// Roster in the Kit exchange shape, for export and agent prompts.
+    var peopleForExport: [PersonImport] {
+        people.map { PersonImport(name: $0.name, context: $0.context) }
+    }
+
     // MARK: - In-progress recording (crash recovery)
 
     /// Metadata written when a recording starts, so a crash mid-recording can
