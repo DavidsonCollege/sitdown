@@ -25,13 +25,19 @@ without AirDrop round-trips.
 ## Run the listener automatically at login
 
 A LaunchAgent keeps the listener alive so you never have to remember a
-terminal window. Install the binary somewhere stable first — pointing
-launchd into `.build/` breaks the next time `swift package clean` runs:
+terminal window. Install the binary with the script — it builds, signs,
+installs to `~/bin` (pointing launchd into `.build/` breaks the next time
+`swift package clean` runs), allows it through the macOS firewall, and
+restarts the agent:
 
 ```bash
-swift build -c release
-mkdir -p ~/bin && install .build/release/luxicon-mcp ~/bin/
+scripts/install-listener.sh
 ```
+
+Signing matters: the firewall remembers "Allow" by code-signing identity,
+and unsigned builds get a new identity each rebuild — the firewall then
+silently blocks the listener and phone pushes fail with "The listener did
+not confirm the transfer".
 
 Save this as `~/Library/LaunchAgents/edu.davidson.luxicon.listener.plist`,
 replacing `YOURUSER` with your username:
@@ -66,16 +72,14 @@ Then load it (starts at login from now on, restarts if it dies):
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/edu.davidson.luxicon.listener.plist
 ```
 
-Verify with `lsof -nP -i :51234` (should show `luxicon-m … LISTEN`). Note
-that the startup banner may not appear in the log immediately — stdout is
-buffered when not attached to a terminal — so read the pairing token from
-the file instead: `cat ~/Luxicon/.sync-token`.
+Verify with `lsof -nP -i :51234` (should show `luxicon-m … LISTEN`), or
+read the startup banner in `~/Library/Logs/luxicon-listener.log`. The
+pairing token is also in `~/Luxicon/.sync-token`.
 
 Housekeeping:
 
-- After pulling new code, rebuild and re-run the `install` command, then
-  `launchctl kickstart -k gui/$(id -u)/edu.davidson.luxicon.listener` to
-  restart on the new binary.
+- After pulling new code, re-run `scripts/install-listener.sh` — it
+  rebuilds, re-signs, and restarts the agent in one go.
 - To stop it: `launchctl bootout gui/$(id -u)/edu.davidson.luxicon.listener`.
 - The listener prints the pairing token at startup, so the log file is as
   sensitive as `.sync-token` — both are readable only by your account.
