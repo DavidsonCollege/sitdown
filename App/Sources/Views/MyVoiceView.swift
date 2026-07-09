@@ -98,7 +98,61 @@ struct MyVoiceView: View {
             } header: {
                 Text("Vocabulary")
             } footer: {
-                Text("Project names, acronyms, jargon — words transcription tends to get wrong. Your name and your people's names are included automatically. Export the CSV template, have a person or AI assistant fill in terms and common mishearings, then import it back.")
+                Text("Project names, acronyms, jargon — words transcription tends to get wrong. Your name and your people's names are included automatically. Export the JSON template, have a person or AI assistant fill in terms and common mishearings, then import it back.")
+            }
+
+            Section {
+                TextField("https://example.com/vocabulary.json", text: $store.vocabularySourceURL)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit {
+                        store.save()
+                        Task { await store.syncVocabulary() }
+                    }
+                if !store.vocabularySourceURL.isEmpty {
+                    DisclosureGroup("Request Headers") {
+                        ForEach($store.vocabularyHeaders) { $header in
+                            HStack {
+                                TextField("Header", text: $header.name)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .frame(maxWidth: 140)
+                                Divider()
+                                TextField("Value", text: $header.value)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                            }
+                            .font(.callout.monospaced())
+                        }
+                        .onDelete { offsets in
+                            store.vocabularyHeaders.remove(atOffsets: offsets)
+                            store.save()
+                        }
+                        Button {
+                            store.vocabularyHeaders.append(Store.HTTPHeader())
+                        } label: {
+                            Label("Add Header", systemImage: "plus")
+                        }
+                    }
+                    Button {
+                        store.save()
+                        Task { await store.syncVocabulary() }
+                    } label: {
+                        Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+            } header: {
+                Text("Vocabulary sync")
+            } footer: {
+                if let error = store.vocabularySyncError {
+                    Text("Sync failed: \(error)")
+                        .foregroundStyle(.red)
+                } else if let last = store.vocabularyLastSync, !store.vocabularySourceURL.isEmpty {
+                    Text("Synced \(last.formatted(.relative(presentation: .named))). The file at this URL replaces the vocabulary list on each sync — edit it there, not here. Headers are sent with every request (for example an Authorization token).")
+                } else {
+                    Text("Point at a JSON vocabulary file (same format as the export) and Luxicon will keep the list synchronized whenever the app opens. The file replaces the vocabulary list; add auth via Request Headers if needed.")
+                }
             }
 
             Section {
@@ -126,7 +180,7 @@ struct MyVoiceView: View {
         }
         .fileImporter(
             isPresented: $importingVocabulary,
-            allowedContentTypes: [.commaSeparatedText, .plainText, .text]
+            allowedContentTypes: [.json, .plainText, .text]
         ) { result in
             importVocabulary(result)
         }
@@ -154,10 +208,11 @@ struct MyVoiceView: View {
     /// ShareLink needs a file URL ready before the tap.
     private func writeVocabularyFile() {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Luxicon Vocabulary.csv")
-        let csv = VocabularyCSV.template(existing: store.vocabularyEntries)
-        try? csv.write(to: url, atomically: true, encoding: .utf8)
-        vocabularyFileURL = url
+            .appendingPathComponent("Luxicon Vocabulary.json")
+        if let data = try? VocabularyJSON.template(existing: store.vocabularyEntries) {
+            try? data.write(to: url)
+            vocabularyFileURL = url
+        }
     }
 
     private func importVocabulary(_ result: Result<URL, Error>) {
@@ -165,7 +220,7 @@ struct MyVoiceView: View {
             let url = try result.get()
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let entries = try VocabularyCSV.parse(String(contentsOf: url, encoding: .utf8))
+            let entries = try VocabularyJSON.parse(Data(contentsOf: url))
             let count = store.importVocabulary(entries)
             importResult = "Imported \(count) terms."
         } catch {

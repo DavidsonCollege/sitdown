@@ -43,6 +43,22 @@ final class Store {
     var vocabularyEntries: [VocabularyEntry] = []
     /// Which ASR engine transcribes turns.
     var asrEngine: ASREngine = .parakeet
+    /// Remote vocabulary file kept in sync; when set, it is the source of
+    /// truth and each sync replaces `vocabularyEntries`.
+    var vocabularySourceURL: String = ""
+    /// Request headers for the sync fetch (e.g. Authorization). Stored in the
+    /// app's on-device container like everything else.
+    var vocabularyHeaders: [HTTPHeader] = []
+    var vocabularyLastSync: Date?
+    /// Transient sync status for the UI; not persisted.
+    var vocabularySyncError: String?
+    @ObservationIgnored var vocabularyLastSyncAttempt: Date?
+
+    struct HTTPHeader: Codable, Equatable, Identifiable {
+        var id = UUID()
+        var name: String = ""
+        var value: String = ""
+    }
 
     private struct Persisted: Codable {
         var people: [Person]
@@ -53,6 +69,9 @@ final class Store {
         var customVocabulary: [String]?
         var vocabularyEntries: [VocabularyEntry]?
         var asrEngine: ASREngine?
+        var vocabularySourceURL: String?
+        var vocabularyHeaders: [HTTPHeader]?
+        var vocabularyLastSync: Date?
     }
 
     static let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -87,6 +106,9 @@ final class Store {
         vocabularyEntries = persisted.vocabularyEntries
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
         asrEngine = persisted.asrEngine ?? .parakeet
+        vocabularySourceURL = persisted.vocabularySourceURL ?? ""
+        vocabularyHeaders = persisted.vocabularyHeaders ?? []
+        vocabularyLastSync = persisted.vocabularyLastSync
     }
 
     func save() {
@@ -94,7 +116,10 @@ final class Store {
             people: people, sessions: sessions,
             myName: myName, myVoiceEmbedding: myVoiceEmbedding,
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
-            asrEngine: asrEngine
+            asrEngine: asrEngine,
+            vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
+            vocabularyHeaders: vocabularyHeaders.isEmpty ? nil : vocabularyHeaders,
+            vocabularyLastSync: vocabularyLastSync
         )
         if let data = try? JSONEncoder().encode(persisted) {
             try? data.write(to: Self.storeURL, options: .atomic)

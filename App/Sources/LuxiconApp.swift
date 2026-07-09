@@ -18,6 +18,7 @@ struct LuxiconApp: App {
                 store.handleScenePhaseChange(toBackground: true)
             case .active:
                 store.handleScenePhaseChange(toBackground: false)
+                store.syncVocabularyIfConfigured()
             default:
                 break
             }
