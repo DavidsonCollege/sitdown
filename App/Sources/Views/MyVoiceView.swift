@@ -95,6 +95,9 @@ struct MyVoiceView: View {
                 } label: {
                     Label("Import Vocabulary…", systemImage: "square.and.arrow.down")
                 }
+                ShareLink(item: VocabularyJSON.agentPrompt(existing: store.vocabularyEntries)) {
+                    Label("Share Agent Prompt", systemImage: "sparkles")
+                }
             } header: {
                 Text("Vocabulary")
             } footer: {

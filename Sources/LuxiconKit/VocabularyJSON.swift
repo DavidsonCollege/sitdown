@@ -37,6 +37,56 @@ public enum VocabularyJSON {
         )
     }
 
+    /// A ready-to-paste prompt for an AI assistant that produces an
+    /// importable vocabulary file, with the user's current terms embedded so
+    /// the agent extends rather than starts over.
+    public static func agentPrompt(existing: [VocabularyEntry]) -> String {
+        let current: String
+        if existing.isEmpty {
+            current = "(none yet)"
+        } else {
+            current = (try? export(existing)).flatMap { String(data: $0, encoding: .utf8) }
+                ?? "(none yet)"
+        }
+        return """
+        Help me improve on-device speech-to-text for my 1-on-1 meeting recorder \
+        (Luxicon). Build a vocabulary file that grounds transcription in the \
+        words my meetings actually contain.
+
+        Output valid JSON only, in exactly this format:
+
+        {
+          "kind": "luxicon-vocabulary",
+          "schemaVersion": 1,
+          "terms": [
+            {"term": "Choreo", "soundsLike": ["corio", "correo"], "category": "project", "notes": "internal platform"}
+          ]
+        }
+
+        Rules:
+        - "term": the canonical spelling, exactly as it should appear in transcripts.
+        - "soundsLike": up to 3 plausible speech-to-text mishearings — phonetically \
+        similar words or spellings a recognizer might produce instead. Omit when \
+        the term is unlikely to be misheard.
+        - "category": one of name, project, acronym, place, other.
+        - "notes": brief context for future maintenance (the app ignores it).
+        - Include: names of people I work with, project and system names, \
+        acronyms, organization-specific jargon, and local place names. Exclude \
+        ordinary English words — the recognizer already knows them.
+        - 20-60 terms is the useful range; quality over quantity.
+
+        If I haven't provided source material, ask me for a team roster, project \
+        list, or glossary/wiki pages before guessing.
+
+        My current vocabulary — extend and improve it, keeping existing terms \
+        unless they are clearly wrong:
+
+        \(current)
+
+        Return only the finished JSON, ready to import.
+        """
+    }
+
     public static func parse(_ data: Data) throws -> [VocabularyEntry] {
         let root = try JSONSerialization.jsonObject(with: data)
         let rawTerms: [Any]

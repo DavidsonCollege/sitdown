@@ -46,3 +46,19 @@ import Foundation
         }
     }
 }
+
+@Suite struct AgentPromptTests {
+    @Test func promptEmbedsCurrentTermsAndSchema() {
+        let prompt = VocabularyJSON.agentPrompt(existing: [
+            VocabularyEntry(term: "Choreo", soundsLike: ["corio"]),
+        ])
+        #expect(prompt.contains("\"kind\": \"luxicon-vocabulary\""))
+        #expect(prompt.contains("Choreo"))
+        #expect(prompt.contains("Return only the finished JSON"))
+    }
+
+    @Test func promptHandlesEmptyVocabulary() {
+        let prompt = VocabularyJSON.agentPrompt(existing: [])
+        #expect(prompt.contains("(none yet)"))
+    }
+}
