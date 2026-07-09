@@ -96,6 +96,22 @@ public struct MeetingTranscript: Codable, Sendable, Equatable {
     }
 }
 
+/// LLM-generated summary of one session — stored beside the transcript,
+/// never mixed into the transcript export.
+public struct SessionSummary: Codable, Sendable, Equatable {
+    /// One line (≤ ~8 words) labeling the meeting in lists.
+    public var headline: String
+    /// Longer markdown summary (topics, decisions, action items).
+    public var overview: String
+    public var generatedAt: Date
+
+    public init(headline: String, overview: String, generatedAt: Date) {
+        self.headline = headline
+        self.overview = overview
+        self.generatedAt = generatedAt
+    }
+}
+
 // MARK: - Enrollment
 
 /// A known voice: a person with a stored speaker embedding.

@@ -12,6 +12,8 @@ final class ProcessingState {
         var stage: String
     }
     var bySession: [UUID: Info] = [:]
+    /// Sessions currently generating a summary (value = stage description).
+    var summarizing: [UUID: String] = [:]
     /// Running task per session, so backgrounding can cancel cleanly.
     @ObservationIgnored var tasks: [UUID: Task<Void, Never>] = [:]
     /// Sessions cancelled by backgrounding, to auto-resume on foreground.
@@ -67,6 +69,7 @@ extension Store {
                 }
                 s.transcript = transcript
                 s.status = .ready
+                s.summary = nil  // stale after re-transcription
             } catch is CancellationError {
                 // Backgrounded or user-cancelled: audio is safe, just not processed.
                 s.status = .recorded
@@ -81,6 +84,9 @@ extension Store {
             }
             update(s)
             refreshKeepAwake()
+            if s.status == .ready, self.autoSummarize {
+                self.startSummarizing(s)
+            }
         }
         processing.tasks[sessionId] = task
 

@@ -164,10 +164,12 @@ struct MyVoiceView: View {
                     Text("Qwen3 (experimental)").tag(ASREngine.qwen3)
                 }
                 .onChange(of: store.asrEngine) { store.save() }
+                Toggle("Summarize automatically", isOn: $store.autoSummarize)
+                    .onChange(of: store.autoSummarize) { store.save() }
             } header: {
                 Text("Transcription engine")
             } footer: {
-                Text("Parakeet is fast and battery-friendly; vocabulary is applied as a correction pass. Qwen3 injects your vocabulary directly into the recognizer (better on unusual names) but downloads ~400 MB more and runs slower.")
+                Text("Parakeet is fast and battery-friendly; vocabulary is applied as a correction pass. Qwen3 injects your vocabulary directly into the recognizer (better on unusual names) but downloads ~400 MB more and runs slower. Automatic summaries use an on-device language model (one-time ~400 MB download); nothing leaves the phone.")
             }
 
             if let errorMessage {

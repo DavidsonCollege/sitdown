@@ -24,6 +24,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var duration: Double
     var status: Status = .recorded
     var transcript: MeetingTranscript?
+    /// On-device LLM summary; separate from the transcript by design.
+    var summary: SessionSummary?
     var errorMessage: String?
 
     var audioFileName: String { "\(id.uuidString).wav" }
@@ -43,6 +45,8 @@ final class Store {
     var vocabularyEntries: [VocabularyEntry] = []
     /// Which ASR engine transcribes turns.
     var asrEngine: ASREngine = .parakeet
+    /// Generate a summary automatically after each transcription.
+    var autoSummarize = true
     /// Remote vocabulary file kept in sync; when set, it is the source of
     /// truth and each sync replaces `vocabularyEntries`.
     var vocabularySourceURL: String = ""
@@ -72,6 +76,7 @@ final class Store {
         var vocabularySourceURL: String?
         var vocabularyHeaders: [HTTPHeader]?
         var vocabularyLastSync: Date?
+        var autoSummarize: Bool?
     }
 
     static let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -109,6 +114,7 @@ final class Store {
         vocabularySourceURL = persisted.vocabularySourceURL ?? ""
         vocabularyHeaders = persisted.vocabularyHeaders ?? []
         vocabularyLastSync = persisted.vocabularyLastSync
+        autoSummarize = persisted.autoSummarize ?? true
     }
 
     func save() {
@@ -119,7 +125,8 @@ final class Store {
             asrEngine: asrEngine,
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
             vocabularyHeaders: vocabularyHeaders.isEmpty ? nil : vocabularyHeaders,
-            vocabularyLastSync: vocabularyLastSync
+            vocabularyLastSync: vocabularyLastSync,
+            autoSummarize: autoSummarize
         )
         if let data = try? JSONEncoder().encode(persisted) {
             try? data.write(to: Self.storeURL, options: .atomic)

@@ -33,6 +33,20 @@ public enum TranscriptExport {
         return try encoder.encode(Envelope(transcript: t))
     }
 
+    /// Standalone summary export — deliberately separate from the transcript
+    /// markdown, which stays a verbatim record.
+    public static func summaryMarkdown(_ summary: SessionSummary, transcript: MeetingTranscript) -> String {
+        var out = "# Summary: \(transcript.title)\n\n"
+        out += "- **Date:** \(transcript.date.formatted(date: .long, time: .shortened))\n"
+        out += "- **Duration:** \(timestamp(transcript.duration))\n"
+        out += "- **Participants:** "
+        out += transcript.speakers.map(\.displayName).joined(separator: ", ")
+        out += "\n- **Summary generated:** \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened)) (on-device)\n\n"
+        out += "**\(summary.headline)**\n\n"
+        out += summary.overview + "\n"
+        return out
+    }
+
     /// mm:ss (or h:mm:ss past an hour).
     public static func timestamp(_ seconds: Double) -> String {
         let s = Int(seconds.rounded())

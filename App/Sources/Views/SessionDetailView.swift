@@ -71,9 +71,11 @@ struct TranscriptView: View {
     @State private var renamingSpeakerId: Int?
     @State private var renameText = ""
     @State private var exportURL: URL?
+    @State private var summaryURL: URL?
 
     var body: some View {
         List {
+            summarySection
             Section("Talk time") {
                 ForEach(transcript.speakers, id: \.speakerId) { s in
                     HStack {
@@ -136,6 +138,7 @@ struct TranscriptView: View {
             }
         }
         .onAppear { writeExportFile() }
+        .onChange(of: session.summary) { writeExportFile() }
         .alert("Rename Speaker", isPresented: Binding(
             get: { renamingSpeakerId != nil },
             set: { if !$0 { renamingSpeakerId = nil } }
@@ -156,6 +159,45 @@ struct TranscriptView: View {
         }
     }
 
+    @ViewBuilder
+    private var summarySection: some View {
+        Section("Summary") {
+            if let summary = session.summary {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(summary.headline)
+                        .font(.headline)
+                    Text(LocalizedStringKey(summary.overview))
+                        .font(.callout)
+                }
+                .padding(.vertical, 2)
+                if let summaryURL {
+                    ShareLink(item: summaryURL) {
+                        Label("Share Summary", systemImage: "square.and.arrow.up")
+                    }
+                }
+                Button {
+                    var s = session
+                    s.summary = nil
+                    store.update(s)
+                    store.startSummarizing(s)
+                } label: {
+                    Label("Regenerate Summary", systemImage: "arrow.clockwise")
+                }
+            } else if let stage = store.processing.summarizing[session.id] {
+                HStack {
+                    ProgressView()
+                    Text(stage).font(.footnote).foregroundStyle(.secondary).padding(.leading, 8)
+                }
+            } else {
+                Button {
+                    store.startSummarizing(session)
+                } label: {
+                    Label("Generate Summary", systemImage: "sparkles")
+                }
+            }
+        }
+    }
+
     /// ShareLink needs a file URL; write the markdown next to the temp dir.
     private func writeExportFile() {
         let safeTitle = transcript.title.replacingOccurrences(of: "/", with: "-")
@@ -163,5 +205,14 @@ struct TranscriptView: View {
             .appendingPathComponent("\(safeTitle) \(session.date.formatted(.iso8601.year().month().day())).md")
         try? TranscriptExport.markdown(transcript).write(to: url, atomically: true, encoding: .utf8)
         exportURL = url
+        if let summary = session.summary {
+            let sURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Summary — \(safeTitle) \(session.date.formatted(.iso8601.year().month().day())).md")
+            try? TranscriptExport.summaryMarkdown(summary, transcript: transcript)
+                .write(to: sURL, atomically: true, encoding: .utf8)
+            summaryURL = sURL
+        } else {
+            summaryURL = nil
+        }
     }
 }

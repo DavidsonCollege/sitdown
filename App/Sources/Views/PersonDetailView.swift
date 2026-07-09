@@ -6,6 +6,8 @@ struct PersonDetailView: View {
     @Environment(Store.self) private var store
     let person: Person
     @State private var showingRecorder = false
+    @State private var historyURL: URL?
+    @State private var historyJSONURL: URL?
 
     var body: some View {
         let sessions = store.sessions(for: person)
@@ -51,8 +53,58 @@ struct PersonDetailView: View {
             }
         }
         .navigationTitle(person.name)
+        .toolbar {
+            if !readyTranscripts.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        if let historyURL {
+                            ShareLink(item: historyURL) {
+                                Label("Share Full History (Markdown)", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        if let historyJSONURL {
+                            ShareLink(item: historyJSONURL) {
+                                Label("Share Full History (JSON)", systemImage: "curlybraces")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+        }
+        .onAppear { writeHistoryFiles() }
+        .onChange(of: store.sessions) { writeHistoryFiles() }
         .fullScreenCover(isPresented: $showingRecorder) {
             RecordSheetView(person: person)
+        }
+    }
+
+    /// Transcribed sessions oldest-first, as LongitudinalExport expects.
+    private var readyTranscripts: [MeetingTranscript] {
+        store.sessions(for: person)
+            .filter { $0.status == .ready }
+            .compactMap(\.transcript)
+            .sorted { $0.date < $1.date }
+    }
+
+    private func writeHistoryFiles() {
+        let transcripts = readyTranscripts
+        guard !transcripts.isEmpty else {
+            historyURL = nil
+            historyJSONURL = nil
+            return
+        }
+        let base = "1-on-1 History — \(person.name)"
+        let md = FileManager.default.temporaryDirectory.appendingPathComponent("\(base).md")
+        try? LongitudinalExport.markdown(personName: person.name, transcripts: transcripts)
+            .write(to: md, atomically: true, encoding: .utf8)
+        historyURL = md
+        let json = FileManager.default.temporaryDirectory.appendingPathComponent("\(base).json")
+        if let data = try? LongitudinalExport.json(
+            personName: person.name, transcripts: transcripts, generatedAt: Date()) {
+            try? data.write(to: json)
+            historyJSONURL = json
         }
     }
 }
@@ -63,11 +115,17 @@ struct SessionRow: View {
 
     var body: some View {
         HStack {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
+                if let headline = session.summary?.headline {
+                    Text(headline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Text(TranscriptExport.timestamp(session.duration))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             Spacer()
             switch session.status {

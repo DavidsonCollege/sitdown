@@ -1,0 +1,107 @@
+import Foundation
+import Qwen3Chat
+
+/// On-device meeting summarization via Qwen3.5 (MLX, int4 ≈ 404 MB download).
+///
+/// GPU-bound and synchronous like the rest of the pipeline — run from a
+/// background task, foreground-only (iOS kills background GPU work).
+public final class MeetingSummarizer {
+    private let chat: Qwen35MLXChat
+
+    public init(chat: Qwen35MLXChat) {
+        self.chat = chat
+    }
+
+    public static func load(
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> MeetingSummarizer {
+        let chat = try await Qwen35MLXChat.fromPretrained(progressHandler: progress)
+        return MeetingSummarizer(chat: chat)
+    }
+
+    /// Produce a headline + markdown overview. The caller stamps `generatedAt`.
+    public func summarize(_ transcript: MeetingTranscript) throws -> (headline: String, overview: String) {
+        var sampling = ChatSamplingConfig.default
+        sampling.temperature = 0.3
+        sampling.maxTokens = 700
+        let raw = try chat.generate(
+            messages: [
+                ChatMessage(role: .system, content: Self.systemPrompt),
+                ChatMessage(role: .user, content: Self.userPrompt(for: transcript)),
+            ],
+            sampling: sampling
+        )
+        return Self.parse(raw, fallbackTitle: transcript.title)
+    }
+
+    // MARK: - Prompting (static + internal for tests)
+
+    static let systemPrompt = """
+    You summarize workplace 1-on-1 meeting transcripts. Be factual and \
+    specific; use only what the transcript says; never invent details. \
+    Respond in exactly this format:
+
+    HEADLINE: <at most 8 words naming what this meeting was about>
+    SUMMARY:
+    <markdown with these bolded sections, using "- " bullets, no # headings>
+    **Overview** — 2-3 sentences.
+    **Key topics** — bullets.
+    **Decisions** — bullets, or "None recorded".
+    **Action items** — bullets with owner names, or "None recorded".
+    """
+
+    static func userPrompt(for transcript: MeetingTranscript) -> String {
+        let participants = transcript.speakers.map {
+            "\($0.displayName) (\(Int(($0.talkShare * 100).rounded()))% talk time)"
+        }.joined(separator: ", ")
+        let lines = transcript.turns
+            .map { "\($0.displayName): \($0.text)" }
+            .joined(separator: "\n")
+        return """
+        Meeting: \(transcript.title)
+        Date: \(transcript.date.formatted(date: .long, time: .shortened))
+        Duration: \(TranscriptExport.timestamp(transcript.duration))
+        Participants: \(participants)
+
+        Transcript:
+        \(clip(lines))
+        """
+    }
+
+    /// Keep prompts within a sane prefill budget on phone hardware: very long
+    /// transcripts keep their opening and ending, which carry the agenda and
+    /// the action items.
+    static func clip(_ text: String, limit: Int = 20_000) -> String {
+        guard text.count > limit else { return text }
+        let head = text.prefix(Int(Double(limit) * 0.65))
+        let tail = text.suffix(Int(Double(limit) * 0.3))
+        return head + "\n[… middle of transcript trimmed …]\n" + tail
+    }
+
+    static func parse(_ raw: String, fallbackTitle: String) -> (headline: String, overview: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var headline = fallbackTitle
+        var overview = trimmed
+
+        if let headlineRange = trimmed.range(of: "HEADLINE:") {
+            let afterHeadline = trimmed[headlineRange.upperBound...]
+            let headlineLine = afterHeadline
+                .prefix(while: { $0 != "\n" })
+                .trimmingCharacters(in: .whitespaces)
+            if !headlineLine.isEmpty { headline = headlineLine }
+            if let summaryRange = trimmed.range(of: "SUMMARY:") {
+                overview = trimmed[summaryRange.upperBound...]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                overview = afterHeadline
+                    .drop(while: { $0 != "\n" })
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        if headline.count > 90 {
+            headline = String(headline.prefix(87)) + "…"
+        }
+        if overview.isEmpty { overview = trimmed }
+        return (headline, overview)
+    }
+}
