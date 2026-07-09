@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 import SitdownKit
+#if os(iOS)
+import UIKit
+#endif
 
 /// Live caption preview while recording. Best-effort: if the streaming model
 /// isn't available (still downloading, load failure), recording proceeds
@@ -23,6 +26,34 @@ final class LiveCaptioner {
     /// Audio-thread-safe funnel into the async pump.
     private let sink = SampleSink()
     private var pumpTask: Task<Void, Never>?
+    // Written once in init, read in deinit (nonisolated in Swift 6); the
+    // observer closures capture only the thread-safe sink.
+    nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
+
+    init() {
+        #if os(iOS)
+        // Caption inference is CoreML; GPU work from a backgrounded app gets the
+        // process killed. Drop samples while backgrounded — recording itself is
+        // unaffected and the final transcript uses the full audio file.
+        let center = NotificationCenter.default
+        lifecycleObservers = [
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil, queue: .main
+            ) { [sink] _ in sink.suspended = true },
+            center.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil, queue: .main
+            ) { [sink] _ in sink.suspended = false },
+        ]
+        #endif
+    }
+
+    deinit {
+        for observer in lifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     /// Called from `Recorder.onSamples` (audio thread).
     nonisolated var feed: @Sendable ([Float]) -> Void {
