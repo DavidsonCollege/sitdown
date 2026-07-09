@@ -56,29 +56,38 @@ struct LuxiconCLI {
         var title: String?
         var vocabulary: [VocabularyEntry] = []
         var engine: ASREngine = .parakeet
+
+        func value(after flag: String, at i: Int) throws -> String {
+            guard args.indices.contains(i + 1) else {
+                throw ValidationError("\(flag) expects a value")
+            }
+            return args[i + 1]
+        }
+
         var i = 0
         while i < args.count {
             switch args[i] {
             case "--enroll":
-                let spec = args[i + 1]
+                let spec = try value(after: "--enroll", at: i)
                 guard let eq = spec.firstIndex(of: "=") else {
                     throw ValidationError("--enroll expects Name=file.wav, got '\(spec)'")
                 }
                 enrollSpecs.append((String(spec[..<eq]), String(spec[spec.index(after: eq)...])))
                 i += 2
-            case "--out": outDir = args[i + 1]; i += 2
-            case "--title": title = args[i + 1]; i += 2
+            case "--out": outDir = try value(after: "--out", at: i); i += 2
+            case "--title": title = try value(after: "--title", at: i); i += 2
             case "--vocab":
-                vocabulary += args[i + 1].split(separator: ",").map {
+                vocabulary += try value(after: "--vocab", at: i).split(separator: ",").map {
                     VocabularyEntry(term: $0.trimmingCharacters(in: .whitespaces))
                 }
                 i += 2
             case "--vocab-file":
-                let data = try Data(contentsOf: URL(fileURLWithPath: args[i + 1]))
+                let path = try value(after: "--vocab-file", at: i)
+                let data = try Data(contentsOf: URL(fileURLWithPath: path))
                 vocabulary += try VocabularyJSON.parse(data)
                 i += 2
             case "--engine":
-                guard let parsed = ASREngine(rawValue: args[i + 1]) else {
+                guard let parsed = ASREngine(rawValue: try value(after: "--engine", at: i)) else {
                     throw ValidationError("--engine expects parakeet or qwen3")
                 }
                 engine = parsed
@@ -109,7 +118,8 @@ struct LuxiconCLI {
             audio: audio,
             title: title ?? url.deletingPathExtension().lastPathComponent,
             date: Date(),
-            enrollments: enrollments
+            enrollments: enrollments,
+            vocabulary: vocabulary
         ) { p, stage in
             print(String(format: "  [%3.0f%%] %@", p * 100, stage))
         }

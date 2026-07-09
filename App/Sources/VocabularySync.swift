@@ -19,9 +19,8 @@ extension Store {
     func syncVocabulary() async {
         let urlString = vocabularySourceURL.trimmingCharacters(in: .whitespaces)
         guard !urlString.isEmpty else { return }
-        guard let url = URL(string: urlString), let scheme = url.scheme,
-              ["https", "http"].contains(scheme.lowercased()) else {
-            vocabularySyncError = "Not a valid http(s) URL."
+        guard let url = URL(string: urlString), url.scheme?.lowercased() == "https" else {
+            vocabularySyncError = "Not a valid https URL. (Plain http would expose your auth headers.)"
             return
         }
         vocabularyLastSyncAttempt = Date()

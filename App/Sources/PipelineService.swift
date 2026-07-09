@@ -8,12 +8,21 @@ actor PipelineService {
 
     private var pipeline: MeetingPipeline?
     private var loadedEngine: ASREngine?
+    private var isLoading = false
 
     func ensureLoaded(
         engine: ASREngine = .parakeet,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingPipeline {
+        // Actor reentrancy: a second caller arriving mid-load would also see
+        // pipeline == nil and start a duplicate ~700 MB download. Park until
+        // the in-flight load settles, then re-check.
+        while isLoading {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
         if let pipeline, loadedEngine == engine { return pipeline }
+        isLoading = true
+        defer { isLoading = false }
         pipeline = nil  // release the old engine's memory before loading anew
         let loaded = try await MeetingPipeline.load(engine: engine, progress: progress)
         pipeline = loaded

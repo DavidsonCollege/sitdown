@@ -7,12 +7,20 @@ actor SummaryService {
     static let shared = SummaryService()
 
     private var summarizer: MeetingSummarizer?
+    private var isLoading = false
 
     func summarize(
         _ transcript: MeetingTranscript,
         progress: @Sendable @escaping (String) -> Void
     ) async throws -> SessionSummary {
+        // Actor reentrancy: without the gate, two sessions summarizing at once
+        // would both see nil and download/load the model twice.
+        while isLoading {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
         if summarizer == nil {
+            isLoading = true
+            defer { isLoading = false }
             summarizer = try await MeetingSummarizer.load { fraction, stage in
                 progress("\(stage) \(Int(fraction * 100))%")
             }

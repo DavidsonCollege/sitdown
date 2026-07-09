@@ -30,7 +30,9 @@ extension Store {
 
     /// Kick off diarization + transcription for a recorded session.
     func startProcessing(_ session: SessionRecord) {
-        guard session.status == .recorded || session.status == .failed else { return }
+        // .recorded/.failed start normally; .ready allows Re-transcribe. Only
+        // a session already being processed is refused.
+        guard session.status != .processing, processing.tasks[session.id] == nil else { return }
         var s = session
         s.status = .processing
         s.errorMessage = nil
