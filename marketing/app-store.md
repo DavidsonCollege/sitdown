@@ -138,6 +138,18 @@ record.
 
 ## TestFlight — What to Test (per-build notes, 4000 chars max)
 
+### Build 8
+
+New since build 7 — a quick way to get the Mac listener onto your Mac:
+
+(1) In My Voice → Mac sync, tap "Send installer link to your Mac" (the first row
+of the section). The system share sheet should open with a link to the listener
+installer. AirDrop it to your Mac (or send it via Messages/Mail) and confirm the
+Mac opens the Releases page where LuxiconListener.pkg can be downloaded.
+(2) Confirm the rest of the Mac sync section is unchanged: the pairing-token
+field, optional Mac address, and "Push automatically after each 1-on-1" toggle
+all still work as before.
+
 ### Build 7
 
 New since build 6 — please exercise the new "off the record" control:
