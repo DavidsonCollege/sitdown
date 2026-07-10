@@ -125,7 +125,7 @@ struct PeopleListView: View {
                                 Label("Export People", systemImage: "square.and.arrow.up")
                             }
                         }
-                        ShareLink(item: PeopleJSON.agentPrompt(existing: store.peopleForExport)) {
+                        ShareLink(item: PeopleJSON.agentPrompt(existing: store.peopleForExport, me: store.meForExport)) {
                             Label("Share Agent Prompt", systemImage: "sparkles")
                         }
                     } label: {
@@ -254,7 +254,7 @@ struct PeopleListView: View {
     private func writePeopleFile() {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("Luxicon People.json")
-        if let data = try? PeopleJSON.template(existing: store.peopleForExport) {
+        if let data = try? PeopleJSON.template(existing: store.peopleForExport, me: store.meForExport) {
             try? data.write(to: url)
             peopleFileURL = url
         }
@@ -265,8 +265,8 @@ struct PeopleListView: View {
             let url = try result.get()
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let records = try PeopleJSON.parse(Data(contentsOf: url))
-            let (added, updated) = store.importPeople(records)
+            let file = try PeopleJSON.parse(Data(contentsOf: url))
+            let (added, updated) = store.importPeople(file)
             importResult = "Added \(added), updated \(updated). Nobody is removed by imports."
         } catch {
             importResult = "Import failed: \(error.localizedDescription)"

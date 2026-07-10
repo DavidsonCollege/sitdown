@@ -48,16 +48,28 @@ struct PersonDetailView: View {
             }
 
             // Personal context is part of the opt-in AI summaries feature
-            // (My Voice → AI summaries); hidden while it's off.
+            // (My Voice → AI summaries); hidden while it's off. With people
+            // sync on, the synced file owns context, so it's read-only here.
             if store.aiSummariesEnabled {
                 Section {
-                    TextField("Role, projects, current threads…",
-                              text: contextBinding, axis: .vertical)
-                        .lineLimit(2...6)
+                    if store.peopleSyncConfigured {
+                        if let context = store.person(id: person.id)?.context {
+                            Text(context)
+                        } else {
+                            Text("No context yet — add \(person.name) to the synced people file.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        TextField("Role, projects, current threads…",
+                                  text: contextBinding, axis: .vertical)
+                            .lineLimit(2...6)
+                    }
                 } header: {
                     Text("Context")
                 } footer: {
-                    Text("Background the summarizer uses to interpret your 1-on-1s — e.g. “Senior sysadmin; runs the identity platform; discussing promotion this quarter.” Stays on this device unless you configure people sync — then the synced file's context wins.")
+                    Text(store.peopleSyncConfigured
+                        ? "Background the summarizer uses to interpret your 1-on-1s. People sync is on, so context comes from the synced file — edit it there."
+                        : "Background the summarizer uses to interpret your 1-on-1s — e.g. “Senior sysadmin; runs the identity platform; discussing promotion this quarter.” Stays on this device unless you configure people sync — then the synced file's context wins.")
                 }
             }
 

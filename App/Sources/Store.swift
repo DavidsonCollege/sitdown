@@ -405,9 +405,14 @@ final class Store {
     /// Merge an imported roster by case-insensitive name: new people are
     /// appended, matches get their context updated when the import provides
     /// one. Never removes anyone — photos and sessions are untouched.
-    func importPeople(_ imported: [PersonImport]) -> (added: Int, updated: Int) {
+    /// The file's "me" entry updates the user's own about-me context.
+    func importPeople(_ file: PeopleFile) -> (added: Int, updated: Int) {
         var added = 0, updated = 0
-        for record in imported {
+        if let context = file.myContext, myContext != context {
+            myContext = context
+            updated += 1
+        }
+        for record in file.people {
             // "You" are not a roster row: an org-chart-fed file usually
             // includes the manager — route that context to My Voice instead
             // of forking a duplicate Person under your own name.
@@ -442,6 +447,11 @@ final class Store {
     /// Roster in the Kit exchange shape, for export and agent prompts.
     var peopleForExport: [PersonImport] {
         people.map { PersonImport(name: $0.name, context: $0.context) }
+    }
+
+    /// The user themself in the exchange shape — the file's "me" entry.
+    var meForExport: PersonImport {
+        PersonImport(name: myName, context: myContext.isEmpty ? nil : myContext)
     }
 
     // MARK: - In-progress recording (crash recovery)

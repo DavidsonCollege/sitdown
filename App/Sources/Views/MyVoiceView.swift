@@ -29,8 +29,19 @@ struct MyVoiceView: View {
                         .onSubmit { store.save() }
                 }
                 if store.aiSummariesEnabled {
-                    TextField("About you — role, team, current focus", text: $store.myContext, axis: .vertical)
-                        .lineLimit(2...6)
+                    // With people sync on, the synced file's "me" entry owns
+                    // this context, so it's read-only here.
+                    if store.peopleSyncConfigured {
+                        if store.myContext.isEmpty {
+                            Text("About you comes from the synced people file — add a “me” entry there.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(store.myContext)
+                        }
+                    } else {
+                        TextField("About you — role, team, current focus", text: $store.myContext, axis: .vertical)
+                            .lineLimit(2...6)
+                    }
                 }
             }
 
@@ -89,7 +100,9 @@ struct MyVoiceView: View {
             } header: {
                 Text("Vocabulary")
             } footer: {
-                Text("Words transcription tends to get wrong. Add, import, or export them here — or keep the list synchronized from a URL below.")
+                Text(store.vocabularySyncConfigured
+                    ? "Words transcription tends to get wrong. The list is synchronized from the URL below and read-only in the app."
+                    : "Words transcription tends to get wrong. Add, import, or export them here — or keep the list synchronized from a URL below.")
             }
 
             SyncSourceSection(
@@ -100,7 +113,7 @@ struct MyVoiceView: View {
                 lastSync: store.vocabularyLastSync,
                 syncError: store.vocabularySyncError,
                 idleFooter: "Point at a JSON vocabulary file (same format as the export) and Luxicon will keep the list synchronized whenever the app opens. The file replaces the vocabulary list; add auth via Request Headers if needed.",
-                syncedFooter: "The file at this URL replaces the vocabulary list on each sync — edit it there, not here. Headers are sent with every request (for example an Authorization token).",
+                syncedFooter: "The file at this URL replaces the vocabulary list on each sync — the list is read-only in the app; edit the file instead. Headers are sent with every request (for example an Authorization token).",
                 onSave: { store.save() },
                 onSync: { Task { await store.syncVocabulary() } }
             )
@@ -112,8 +125,8 @@ struct MyVoiceView: View {
                 headers: $store.peopleHeaders,
                 lastSync: store.peopleLastSync,
                 syncError: store.peopleSyncError,
-                idleFooter: "Point at a JSON people file (same format as Export People) and Luxicon will keep the roster synchronized whenever the app opens. Syncing adds and updates people (name and context) and never removes anyone.",
-                syncedFooter: "Syncing adds and updates people (name and context) and never removes anyone — remove people manually in the list. For people in the synced file, its context wins on each sync — edit their context there, not here. Headers are sent with every request (for example an Authorization token).",
+                idleFooter: "Point at a JSON people file (same format as Export People) and Luxicon will keep the roster synchronized whenever the app opens. Syncing adds and updates people (name and context), applies the file's “me” entry to About You, and never removes anyone.",
+                syncedFooter: "Syncing adds and updates people (name and context), applies the file's “me” entry to About You, and never removes anyone — remove people manually in the list. While sync is on, context fields are read-only in the app; edit the file instead. Headers are sent with every request (for example an Authorization token).",
                 onSave: { store.save() },
                 onSync: { Task { await store.syncPeople() } }
             )
