@@ -82,8 +82,14 @@ public final class AppleIntelligenceChat: SummaryChat {
         messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String {
         let instructions = messages.filter { $0.role == .system }
             .map(\.content).joined(separator: "\n\n")
+        // The system model drifts from response formats stated only in the
+        // instructions (harness: prose preamble, missing HEADLINE marker) —
+        // restate the requirement at the end of the prompt, where recency
+        // makes it stick.
         let prompt = messages.filter { $0.role != .system }
             .map(\.content).joined(separator: "\n\n")
+            + "\n\nReply using exactly the response format your instructions "
+            + "require, with no preamble before its first line."
         // Fresh session per request: summarization is an isolated task, and
         // carried-over history would only eat the small context window.
         let session = LanguageModelSession(
@@ -94,6 +100,50 @@ public final class AppleIntelligenceChat: SummaryChat {
             maximumResponseTokens: sampling.maxTokens)
         do {
             return try await session.respond(to: prompt, options: options).content
+        } catch let error as LanguageModelSession.GenerationError {
+            if case .guardrailViolation = error { throw SummaryBackendError.declined }
+            throw error
+        }
+    }
+
+    /// Summary fields the model must fill — the decoder constrains output to
+    /// this shape, so format compliance stops depending on the prompt (the
+    /// system model drifts from prompt-stated formats).
+    @Generable(description: "A grounded summary of a workplace 1-on-1 meeting")
+    struct GuidedSummary {
+        @Guide(description: "The gist as a glanceable label: 2-4 topics, "
+            + "comma-separated, under 50 characters, Title Case, no people's "
+            + "names, no full sentences")
+        var headline: String
+        @Guide(description: "Two to three sentences on what was discussed, "
+            + "using only what was actually said in the transcript")
+        var overview: String
+        @Guide(description: "Short phrases for the topics actually discussed")
+        var keyTopics: [String]
+        @Guide(description: "Decisions actually made in the conversation; empty if none")
+        var decisions: [String]
+        @Guide(description: "Action items with the owner's name; empty if none")
+        var actionItems: [String]
+    }
+
+    nonisolated(nonsending) public func generateStructuredSummary(
+        system: String, user: String, sampling: ChatSamplingConfig
+    ) async throws -> StructuredSummary? {
+        let session = LanguageModelSession(model: model, instructions: system)
+        let options = GenerationOptions(
+            temperature: Double(sampling.temperature),
+            maximumResponseTokens: sampling.maxTokens)
+        do {
+            let content = try await session.respond(
+                to: Prompt(user), generating: GuidedSummary.self, options: options
+            ).content
+            return StructuredSummary(
+                headline: content.headline,
+                overview: MeetingSummarizer.assembleOverview(
+                    overview: content.overview,
+                    keyTopics: content.keyTopics,
+                    decisions: content.decisions,
+                    actionItems: content.actionItems))
         } catch let error as LanguageModelSession.GenerationError {
             if case .guardrailViolation = error { throw SummaryBackendError.declined }
             throw error

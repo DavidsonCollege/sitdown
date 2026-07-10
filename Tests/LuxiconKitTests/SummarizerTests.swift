@@ -304,6 +304,142 @@ final class MockChat: SummaryChat {
     }
 }
 
+/// Backend with guided generation (like Apple Intelligence): returns typed
+/// summaries, so the marker path must never run for summary passes.
+final class MockStructuredChat: SummaryChat {
+    var noteReply = "- note"
+    private(set) var generateCalls = 0
+    private(set) var structuredCalls = 0
+
+    func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) throws -> String {
+        generateCalls += 1
+        return noteReply
+    }
+
+    func generateStructuredSummary(
+        system: String, user: String, sampling: ChatSamplingConfig
+    ) throws -> StructuredSummary? {
+        structuredCalls += 1
+        return StructuredSummary(
+            headline: "Budget, hiring",
+            overview: MeetingSummarizer.assembleOverview(
+                overview: "Structured.", keyTopics: ["Budget"], decisions: [], actionItems: []))
+    }
+}
+
+@Suite struct StructuredSummaryTests {
+    private func meeting(turnCount: Int) -> MeetingTranscript {
+        MeetingTranscript(
+            title: "Weekly 1:1", date: Date(timeIntervalSince1970: 1_780_000_000),
+            duration: 600,
+            turns: (0..<turnCount).map { i in
+                TranscriptTurn(
+                    id: i, speakerId: i % 2, speakerName: "S\(i % 2 + 1)",
+                    start: Double(i * 30), end: Double(i * 30 + 29),
+                    text: "Topic \(i) discussion point covering budget planning items "
+                        + "and the follow up owners we assigned for next week.")
+            })
+    }
+
+    @Test func assembleOverviewFormatsSections() {
+        let md = MeetingSummarizer.assembleOverview(
+            overview: "We discussed the budget.",
+            keyTopics: ["Budget", "Hiring"],
+            decisions: [],
+            actionItems: ["JD: post the roles"])
+        #expect(md.contains("**Overview** — We discussed the budget."))
+        #expect(md.contains("**Key topics** —\n- Budget\n- Hiring"))
+        #expect(md.contains("**Decisions** — None recorded"))
+        #expect(md.contains("**Action items** —\n- JD: post the roles"))
+    }
+
+    @Test func assembleOverviewTreatsNoneRecordedItemsAsEmpty() {
+        // Guided generation asks for empty arrays when nothing was recorded,
+        // but the model sometimes fills ["None recorded"] instead — that must
+        // render as the inline "— None recorded", not as a bullet.
+        let md = MeetingSummarizer.assembleOverview(
+            overview: "x", keyTopics: ["Budget"],
+            decisions: ["None recorded"], actionItems: ["none"])
+        #expect(md.contains("**Decisions** — None recorded"))
+        #expect(md.contains("**Action items** — None recorded"))
+        #expect(!md.contains("- None recorded"))
+        #expect(!md.contains("- none"))
+    }
+
+    @Test func structuredBackendSkipsMarkerParsing() async throws {
+        let chat = MockStructuredChat()
+        let summarizer = MeetingSummarizer(chat: chat)
+        let result = try await summarizer.summarize(meeting(turnCount: 4))
+        #expect(result.headline == "Budget, hiring")
+        #expect(result.overview.contains("**Overview** — Structured."))
+        #expect(chat.structuredCalls == 1)
+        #expect(chat.generateCalls == 0)
+    }
+
+    @Test func chunkedMergeUsesStructuredBackend() async throws {
+        // Section notes stay freeform (they're intermediate), but the merge
+        // pass — which produces the user-visible summary — goes structured.
+        let chat = MockStructuredChat()
+        let summarizer = MeetingSummarizer(chat: chat, transcriptCharBudget: 350)
+        let result = try await summarizer.summarize(meeting(turnCount: 6))
+        #expect(result.headline == "Budget, hiring")
+        #expect(chat.generateCalls >= 2)
+        #expect(chat.structuredCalls == 1)
+    }
+
+    @Test func stripParticipantNamesRemovesNamesAndOrphanedConnectors() {
+        let names = ["JD Mills", "Luke Aeschleman"]
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "JD Mills: Stack Map Inc", names: names) == "Stack Map Inc")
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "Check-in with Luke Aeschleman", names: names) == "Check-in")
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "JD Mills and Stack Map pricing", names: names) == "Stack Map pricing")
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "JD Mills on Stack Map pricing", names: names) == "Stack Map pricing")
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "Update about budget from Luke Aeschleman", names: names) == "Update about budget")
+        // No names → untouched.
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "Budget, hiring", names: names) == "Budget, hiring")
+        // All names → empty; the caller's cleanLabel falls back.
+        #expect(MeetingSummarizer.stripParticipantNames(
+            from: "JD Mills and Luke Aeschleman", names: names).isEmpty)
+    }
+
+    @Test func structuredHeadlineDropsParticipantNames() async throws {
+        // The guided model leaks speaker names into labels despite the guide;
+        // known participant names are stripped deterministically.
+        final class NameyChat: SummaryChat {
+            func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) throws -> String { "" }
+            func generateStructuredSummary(
+                system: String, user: String, sampling: ChatSamplingConfig
+            ) throws -> StructuredSummary? {
+                StructuredSummary(headline: "S1: Budget planning", overview: "**Overview** — x")
+            }
+        }
+        let summarizer = MeetingSummarizer(chat: NameyChat())
+        let result = try await summarizer.summarize(meeting(turnCount: 4))
+        #expect(result.headline == "Budget planning")
+    }
+
+    @Test func structuredHeadlineIsCleanedAndClamped() async throws {
+        // Guided output still gets the deterministic label hygiene (quotes,
+        // shouting, runaway length) the refine pass uses.
+        final class ShoutingChat: SummaryChat {
+            func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) throws -> String { "" }
+            func generateStructuredSummary(
+                system: String, user: String, sampling: ChatSamplingConfig
+            ) throws -> StructuredSummary? {
+                StructuredSummary(headline: "\"BUDGET REVIEW, HIRING\"", overview: "**Overview** — x")
+            }
+        }
+        let summarizer = MeetingSummarizer(chat: ShoutingChat())
+        let result = try await summarizer.summarize(meeting(turnCount: 4))
+        #expect(result.headline == "Budget Review, Hiring")
+    }
+}
+
 @Suite struct AppleBackendTests {
     @Test func appleBackendParsesFromCLIRawValue() {
         #expect(MeetingSummarizer.Backend(rawValue: "apple") == .appleIntelligence)

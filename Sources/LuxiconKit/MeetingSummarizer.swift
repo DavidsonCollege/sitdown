@@ -12,6 +12,34 @@ public protocol SummaryChat {
     /// hold a non-Sendable backend and await this without sending it away.
     nonisolated(nonsending) func generate(
         messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String
+
+    /// Summary with the output format enforced by the backend (guided
+    /// generation), bypassing marker parsing. Backends that can constrain
+    /// decoding override this; the default (nil) sends summary passes through
+    /// `generate` + HEADLINE/SUMMARY parsing instead. Added because the Apple
+    /// Intelligence model drifts from prompt-stated formats where the MLX
+    /// backends follow them.
+    nonisolated(nonsending) func generateStructuredSummary(
+        system: String, user: String, sampling: ChatSamplingConfig
+    ) async throws -> StructuredSummary?
+}
+
+extension SummaryChat {
+    nonisolated(nonsending) public func generateStructuredSummary(
+        system: String, user: String, sampling: ChatSamplingConfig
+    ) async throws -> StructuredSummary? { nil }
+}
+
+/// A summary whose format the backend already enforced — `overview` is the
+/// assembled markdown, `headline` still gets deterministic label hygiene.
+public struct StructuredSummary: Sendable {
+    public var headline: String
+    public var overview: String
+
+    public init(headline: String, overview: String) {
+        self.headline = headline
+        self.overview = overview
+    }
 }
 
 extension Qwen35MLXChat: SummaryChat {}
@@ -159,10 +187,16 @@ public final class MeetingSummarizer {
         var sampling = ChatSamplingConfig.default
         sampling.temperature = 0.3
         sampling.maxTokens = 700
+        let userPrompt = Self.userPrompt(for: transcript, context: context)
+        if let structured = try await chat.generateStructuredSummary(
+            system: Self.systemPrompt, user: userPrompt, sampling: sampling
+        ) {
+            return Self.finishStructured(structured, transcript: transcript, context: context)
+        }
         let raw = try await chat.generate(
             messages: [
                 ChatMessage(role: .system, content: Self.systemPrompt),
-                ChatMessage(role: .user, content: Self.userPrompt(for: transcript, context: context)),
+                ChatMessage(role: .user, content: userPrompt),
             ],
             sampling: sampling
         )
@@ -199,15 +233,85 @@ public final class MeetingSummarizer {
         var merge = ChatSamplingConfig.default
         merge.temperature = 0.3
         merge.maxTokens = 700
+        let mergePrompt = Self.mergePrompt(for: transcript, notes: notes, context: context)
+        if let structured = try await chat.generateStructuredSummary(
+            system: Self.systemPrompt, user: mergePrompt, sampling: merge
+        ) {
+            return Self.finishStructured(structured, transcript: transcript, context: context)
+        }
         let raw = try await chat.generate(
             messages: [
                 ChatMessage(role: .system, content: Self.systemPrompt),
-                ChatMessage(role: .user, content: Self.mergePrompt(
-                    for: transcript, notes: notes, context: context)),
+                ChatMessage(role: .user, content: mergePrompt),
             ],
             sampling: merge
         )
         return Self.parse(raw, fallbackTitle: transcript.title)
+    }
+
+    /// Deterministic label hygiene for a structured summary: strip leaked
+    /// participant names, then the usual quote/shout/length cleanup.
+    static func finishStructured(
+        _ structured: StructuredSummary,
+        transcript: MeetingTranscript,
+        context: [SummaryParticipant]
+    ) -> (headline: String, overview: String) {
+        let names = transcript.speakers.map(\.displayName) + context.map(\.name)
+        let label = stripParticipantNames(from: structured.headline, names: names)
+        return (
+            headline: cleanLabel(label, fallback: transcript.title),
+            overview: structured.overview
+        )
+    }
+
+    /// Remove participant names a model leaked into a list label, then clean
+    /// the connectors and punctuation left orphaned ("JD: Budget" → "Budget").
+    /// Returns "" when the label was nothing but names — callers fall back.
+    static func stripParticipantNames(from label: String, names: [String]) -> String {
+        var result = label
+        for name in names where !name.trimmingCharacters(in: .whitespaces).isEmpty {
+            result = result.replacingOccurrences(of: name, with: "", options: .caseInsensitive)
+        }
+        guard result != label else { return label }
+        var previous = ""
+        while previous != result {
+            previous = result
+            result = result.trimmingCharacters(in: CharacterSet(charactersIn: " ,.:;—–-&"))
+            for word in ["and", "with", "on", "about", "from", "for"] {
+                if result.lowercased().hasPrefix(word + " ") {
+                    result = String(result.dropFirst(word.count + 1))
+                }
+                if result.lowercased().hasSuffix(" " + word) {
+                    result = String(result.dropLast(word.count + 1))
+                }
+                if result.lowercased() == word { result = "" }
+            }
+        }
+        return result.replacingOccurrences(of: "  ", with: " ")
+    }
+
+    /// Render structured summary fields into the app's markdown shape — the
+    /// format lives in code here, not in model compliance.
+    public static func assembleOverview(
+        overview: String, keyTopics: [String], decisions: [String], actionItems: [String]
+    ) -> String {
+        func section(_ title: String, _ items: [String]) -> String {
+            // The model sometimes fills ["None recorded"] instead of an empty
+            // array — normalize either to the inline form, never a bullet.
+            let real = items.filter {
+                let t = $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return !t.isEmpty && t != "none" && t != "none recorded" && t != "none recorded."
+            }
+            return real.isEmpty
+                ? "**\(title)** — None recorded"
+                : "**\(title)** —\n" + real.map { "- \($0)" }.joined(separator: "\n")
+        }
+        return """
+        **Overview** — \(overview)
+        \(section("Key topics", keyTopics))
+        \(section("Decisions", decisions))
+        \(section("Action items", actionItems))
+        """
     }
 
     /// Second pass: rewrite the first-pass headline into the terse
