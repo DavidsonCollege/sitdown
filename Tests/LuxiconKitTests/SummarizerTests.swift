@@ -1,6 +1,54 @@
 import Testing
 import Foundation
+import Qwen3Chat
 @testable import LuxiconKit
+
+/// Scripted chat backend: returns canned replies, records prompts.
+final class MockChat: SummaryChat {
+    var replies: [String]
+    private(set) var calls: [[ChatMessage]] = []
+    init(replies: [String]) { self.replies = replies }
+    func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) throws -> String {
+        calls.append(messages)
+        return replies.isEmpty ? "" : replies.removeFirst()
+    }
+}
+
+@Suite struct SummarizerBackendTests {
+    private func transcript(_ text: String) -> MeetingTranscript {
+        MeetingTranscript(
+            title: "Weekly 1:1", date: Date(timeIntervalSince1970: 1_780_000_000),
+            duration: 60,
+            turns: [TranscriptTurn(id: 0, speakerId: 0, speakerName: "JD", start: 0, end: 60, text: text)]
+        )
+    }
+
+    @Test func summarizeRunsOverAnyBackend() throws {
+        // The summarizer must work over the SummaryChat protocol, not a
+        // concrete model class — Qwen and Gemma backends are interchangeable.
+        let mock = MockChat(replies: ["HEADLINE: Budget, hiring\nSUMMARY:\n**Overview** — Discussed budget."])
+        let summarizer = MeetingSummarizer(chat: mock)
+        let result = try summarizer.summarize(transcript(
+            "We went through the budget line by line and agreed to post the two "
+            + "open positions before the fall hiring push begins next month, and "
+            + "we also reviewed the storage migration timeline, the phishing "
+            + "simulation results, and the help desk staffing gap in detail."))
+        #expect(result.headline == "Budget, hiring")
+        #expect(result.overview.hasPrefix("**Overview**"))
+        #expect(mock.calls.count == 1)
+        #expect(mock.calls[0].first?.role == .system)
+    }
+
+    @Test func emptyAndThinGatesNeverCallTheBackend() throws {
+        let mock = MockChat(replies: [])
+        let summarizer = MeetingSummarizer(chat: mock)
+        let empty = MeetingTranscript(
+            title: "t", date: Date(timeIntervalSince1970: 1_780_000_000), duration: 0, turns: [])
+        #expect(try summarizer.summarize(empty).headline == "No conversation recorded")
+        #expect(try summarizer.summarize(transcript("Check one two.")).headline == "Too short to summarize")
+        #expect(mock.calls.isEmpty)
+    }
+}
 
 @Suite struct SummarizerParsingTests {
     @Test func parsesHeadlineAndSummaryMarkers() {

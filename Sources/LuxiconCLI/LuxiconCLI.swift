@@ -64,6 +64,7 @@ struct LuxiconCLI {
             var secondPass = false
             var modelId: String?
             var modelDir: String?
+            var backend: MeetingSummarizer.Backend = .qwen35
             var j = 2
             while j < args.count {
                 if args[j] == "--second-pass" { secondPass = true; j += 1; continue }
@@ -80,6 +81,11 @@ struct LuxiconCLI {
                     context.append(SummaryParticipant(name: n, context: text))
                 case "--model": modelId = args[j + 1]
                 case "--model-dir": modelDir = args[j + 1]  // local dir with int4/ inside
+                case "--backend":
+                    guard let b = MeetingSummarizer.Backend(rawValue: args[j + 1]) else {
+                        throw ValidationError("--backend expects qwen35 or gemma4")
+                    }
+                    backend = b
                 default: throw ValidationError("unknown option \(args[j])")
                 }
                 j += 2
@@ -87,6 +93,7 @@ struct LuxiconCLI {
 
             print("Loading summarizer model (downloads on first run)…")
             let summarizer = try await MeetingSummarizer.load(
+                backend: backend,
                 modelId: modelId,
                 cacheDir: modelDir.map { URL(fileURLWithPath: $0) },
                 offlineMode: modelDir != nil

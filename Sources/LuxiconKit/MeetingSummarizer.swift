@@ -1,6 +1,16 @@
 import Foundation
 import Qwen3Chat
 
+/// A buffered chat completion backend. Both on-device LLM families in
+/// speech-swift (`Qwen35MLXChat`, `Gemma4Chat`) already share this exact
+/// method shape, so the summarizer stays model-agnostic.
+public protocol SummaryChat {
+    func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) throws -> String
+}
+
+extension Qwen35MLXChat: SummaryChat {}
+extension Gemma4Chat: SummaryChat {}
+
 /// Background knowledge about a meeting participant, injected into the
 /// summarization prompt at call time — never persisted with the transcript,
 /// so editing context improves the next regeneration.
@@ -19,24 +29,41 @@ public struct SummaryParticipant: Sendable, Equatable {
 /// GPU-bound and synchronous like the rest of the pipeline — run from a
 /// background task, foreground-only (iOS kills background GPU work).
 public final class MeetingSummarizer {
-    private let chat: Qwen35MLXChat
+    private let chat: any SummaryChat
 
-    public init(chat: Qwen35MLXChat) {
+    public init(chat: any SummaryChat) {
         self.chat = chat
     }
 
+    /// Which on-device LLM family to load.
+    public enum Backend: String, Sendable {
+        case qwen35, gemma4
+    }
+
     public static func load(
+        backend: Backend = .qwen35,
         modelId: String? = nil,
         cacheDir: URL? = nil,
         offlineMode: Bool = false,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingSummarizer {
-        let chat = try await Qwen35MLXChat.fromPretrained(
-            modelId: modelId ?? Qwen35MLXChat.defaultModelId,
-            cacheDir: cacheDir,
-            offlineMode: offlineMode,
-            progressHandler: progress
-        )
+        let chat: any SummaryChat
+        switch backend {
+        case .qwen35:
+            chat = try await Qwen35MLXChat.fromPretrained(
+                modelId: modelId ?? Qwen35MLXChat.defaultModelId,
+                cacheDir: cacheDir,
+                offlineMode: offlineMode,
+                progressHandler: progress
+            )
+        case .gemma4:
+            chat = try await Gemma4Chat.fromPretrained(
+                modelId: modelId ?? "aufklarer/gemma-4-E2B-it-MLX-4bit",
+                cacheDir: cacheDir,
+                offlineMode: offlineMode,
+                progressHandler: progress
+            )
+        }
         return MeetingSummarizer(chat: chat)
     }
 
