@@ -8,7 +8,10 @@ import Qwen3Chat
 /// framework-owned backend (Apple Intelligence) can conform; the MLX
 /// backends satisfy it with their synchronous method.
 public protocol SummaryChat {
-    func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String
+    /// `nonisolated(nonsending)`: runs on the caller's actor, so an actor can
+    /// hold a non-Sendable backend and await this without sending it away.
+    nonisolated(nonsending) func generate(
+        messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String
 }
 
 extension Qwen35MLXChat: SummaryChat {}
@@ -138,7 +141,10 @@ public final class MeetingSummarizer {
     }
 
     /// Produce a headline + markdown overview. The caller stamps `generatedAt`.
-    public func summarize(
+    /// `nonisolated(nonsending)`: runs on the caller's actor, so an actor
+    /// (SummaryService) can hold this non-Sendable class and await this
+    /// without sending it out of its isolation region.
+    nonisolated(nonsending) public func summarize(
         _ transcript: MeetingTranscript,
         context: [SummaryParticipant] = []
     ) async throws -> (headline: String, overview: String) {
@@ -166,7 +172,7 @@ public final class MeetingSummarizer {
     /// Split summarization for transcripts over the per-pass budget: take
     /// notes on each section, then merge the notes into the final summary.
     /// Replaces the old head+tail trim — every part of a long meeting is read.
-    private func summarizeInSections(
+    nonisolated(nonsending) private func summarizeInSections(
         _ transcript: MeetingTranscript,
         context: [SummaryParticipant]
     ) async throws -> (headline: String, overview: String) {
@@ -205,7 +211,7 @@ public final class MeetingSummarizer {
     /// notification-style label the conversations list needs. A small model
     /// follows one focused rewrite instruction far better than a format clause
     /// buried in the main summarization prompt.
-    public func refineLabel(headline: String, overview: String) async throws -> String {
+    nonisolated(nonsending) public func refineLabel(headline: String, overview: String) async throws -> String {
         var sampling = ChatSamplingConfig.default
         sampling.temperature = 0.0
         // Generous budget: the pipeline may spend tokens on a stripped

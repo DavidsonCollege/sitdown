@@ -78,7 +78,8 @@ public final class AppleIntelligenceChat: SummaryChat {
     /// The model's context window in tokens (8,192 on OS 27, 4,096 before).
     public var contextTokens: Int { model.contextSize }
 
-    public func generate(messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String {
+    nonisolated(nonsending) public func generate(
+        messages: [ChatMessage], sampling: ChatSamplingConfig) async throws -> String {
         let instructions = messages.filter { $0.role == .system }
             .map(\.content).joined(separator: "\n\n")
         let prompt = messages.filter { $0.role != .system }
