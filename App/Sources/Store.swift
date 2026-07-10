@@ -30,6 +30,10 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var transcript: MeetingTranscript?
     /// On-device LLM summary; separate from the transcript by design.
     var summary: SessionSummary?
+    /// Terse one-line label (topics only) shown exclusively in the
+    /// conversations list — generated alongside the summary but stored apart
+    /// from it. Optional so pre-existing store.json decodes unchanged.
+    var listLabel: String?
     var errorMessage: String?
     /// Mac Sync: when this session last pushed successfully, and the error
     /// message from the last failed attempt (nil after a success). Optionals

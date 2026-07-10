@@ -175,13 +175,9 @@ struct TranscriptView: View {
     private var summarySection: some View {
         Section("Summary") {
             if let summary = session.summary {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(summary.headline)
-                        .font(.headline)
-                    Text(LocalizedStringKey(summary.overview))
-                        .font(.callout)
-                }
-                .padding(.vertical, 2)
+                Text(LocalizedStringKey(summary.overview))
+                    .font(.callout)
+                    .padding(.vertical, 2)
                 if let summaryURL {
                     ShareLink(item: summaryURL) {
                         Label("Share Summary", systemImage: "square.and.arrow.up")
@@ -190,6 +186,7 @@ struct TranscriptView: View {
                 Button {
                     var s = session
                     s.summary = nil
+                    s.listLabel = nil
                     store.update(s)
                     store.startSummarizing(s)
                 } label: {

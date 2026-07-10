@@ -96,7 +96,7 @@ struct LuxiconMCP {
         ),
         Tool(
             name: "get_summary",
-            description: "The on-device generated summary (headline + overview) of one session, when the export included it.",
+            description: "The on-device generated summary (overview) of one session, when the export included it.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -196,7 +196,7 @@ struct LuxiconMCP {
                 throw ToolError(message: "No session for '\(person)' on \(date).")
             }
             return matches.map { session in
-                session.summary.map { "\($0.headline)\n\n\($0.overview)" }
+                session.summary.map { $0.overview }
                     ?? "No summary in this export. Re-export the session from the app after its summary generates (or use get_transcript and summarize directly)."
             }.joined(separator: "\n\n---\n\n")
 

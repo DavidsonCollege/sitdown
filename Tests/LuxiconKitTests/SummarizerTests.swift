@@ -153,15 +153,14 @@ import Foundation
             turns: [TranscriptTurn(id: 0, speakerId: 0, speakerName: "JD", start: 0, end: 60, text: "Hi.")]
         )
         let summary = SessionSummary(
-            headline: "Quick check-in",
             overview: "**Overview** — brief.",
             generatedAt: Date(timeIntervalSince1970: 1_780_100_000)
         )
         let md = TranscriptExport.summaryMarkdown(summary, transcript: transcript)
         #expect(md.contains("# Summary: Weekly 1:1"))
-        #expect(md.contains("Quick check-in"))
+        #expect(md.contains("**Overview** — brief."))
         #expect(md.contains("(on-device)"))
         // The transcript export must remain untouched by summaries.
-        #expect(!TranscriptExport.markdown(transcript).contains("Quick check-in"))
+        #expect(!TranscriptExport.markdown(transcript).contains("**Overview** — brief."))
     }
 }

@@ -80,6 +80,7 @@ extension Store {
                 s.transcript = transcript
                 s.status = .ready
                 s.summary = nil  // stale after re-transcription
+                s.listLabel = nil
             } catch is CancellationError {
                 // Backgrounded or user-cancelled: audio is safe, just not processed.
                 s.status = .recorded
@@ -99,6 +100,7 @@ extension Store {
                 current.status = s.status
                 current.transcript = s.transcript
                 current.summary = s.summary
+                current.listLabel = s.listLabel
                 current.errorMessage = s.errorMessage
                 if s.status == .ready {
                     // New transcript ⇒ any earlier push refers to older bytes.

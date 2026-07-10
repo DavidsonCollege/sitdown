@@ -44,7 +44,6 @@ public enum TranscriptExport {
         out += "- **Participants:** "
         out += transcript.speakers.map(\.displayName).joined(separator: ", ")
         out += "\n- **Summary generated:** \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened)) (on-device)\n\n"
-        out += "**\(summary.headline)**\n\n"
         out += summary.overview + "\n"
         return out
     }

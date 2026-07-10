@@ -173,8 +173,8 @@ struct SessionRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
-                if let headline = session.summary?.headline {
-                    Text(headline)
+                if let listLabel = session.listLabel {
+                    Text(listLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

@@ -99,15 +99,13 @@ public struct MeetingTranscript: Codable, Sendable, Equatable {
 /// LLM-generated summary of one session — stored beside the transcript,
 /// never mixed into the transcript export.
 public struct SessionSummary: Codable, Sendable, Equatable {
-    /// Comma-separated topics covered (≤ 120 chars) labeling the meeting in
-    /// lists — no names; the session already hangs off a person.
-    public var headline: String
-    /// Longer markdown summary (topics, decisions, action items).
+    /// Longer markdown summary (topics, decisions, action items). The terse
+    /// one-line label for lists lives on the session (`listLabel`), not here —
+    /// it's a conversations-list affordance, not part of the summary content.
     public var overview: String
     public var generatedAt: Date
 
-    public init(headline: String, overview: String, generatedAt: Date) {
-        self.headline = headline
+    public init(overview: String, generatedAt: Date) {
         self.overview = overview
         self.generatedAt = generatedAt
     }
