@@ -181,6 +181,10 @@ struct RecordSheetView: View {
 
     private func resumeRecording() {
         recorder.resume()
+        // If resume() failed the recorder stays paused (and sets runtimeError);
+        // keep the off-record screen up rather than showing a live-looking screen
+        // that isn't capturing. The user can tap Resume again.
+        guard !recorder.isPaused else { return }
         RecordingActivityController.shared.setOffRecord(false, elapsed: recorder.duration)
         withAnimation(.easeInOut(duration: 0.3)) { isOffRecord = false }
     }

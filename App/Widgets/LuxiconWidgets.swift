@@ -17,9 +17,9 @@ struct RecordingLiveActivity: Widget {
         ActivityConfiguration(for: RecordingActivityAttributes.self) { context in
             // Lock screen / banner
             HStack(spacing: 12) {
-                Image(systemName: context.state.isOffRecord ? "pause.circle.fill" : "record.circle")
+                Image(systemName: (context.state.isOffRecord ?? false) ? "pause.circle.fill" : "record.circle")
                     .font(.title2)
-                    .foregroundStyle(context.state.isOffRecord ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+                    .foregroundStyle((context.state.isOffRecord ?? false) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recording 1-on-1")
                         .font(.headline)
@@ -30,7 +30,7 @@ struct RecordingLiveActivity: Widget {
                         .privacySensitive()
                 }
                 Spacer()
-                if context.state.isOffRecord {
+                if (context.state.isOffRecord ?? false) {
                     Label("Off the record", systemImage: "lock.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -50,7 +50,7 @@ struct RecordingLiveActivity: Widget {
                         .font(.callout.weight(.semibold))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if context.state.isOffRecord {
+                    if (context.state.isOffRecord ?? false) {
                         Image(systemName: "lock.fill").foregroundStyle(.secondary)
                     } else {
                         Text(timerInterval: timerRange(context), countsDown: false)
@@ -69,7 +69,7 @@ struct RecordingLiveActivity: Widget {
                 Image(systemName: "record.circle")
                     .foregroundStyle(.red)
             } compactTrailing: {
-                if context.state.isOffRecord {
+                if (context.state.isOffRecord ?? false) {
                     Image(systemName: "lock.fill")
                 } else {
                     Text(timerInterval: timerRange(context), countsDown: false)
