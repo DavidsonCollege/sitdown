@@ -111,7 +111,7 @@ extension Store {
                 s = current
             }
             refreshKeepAwake()
-            if s.status == .ready, self.autoSummarize {
+            if s.status == .ready, self.aiSummariesEnabled, self.autoSummarize {
                 self.startSummarizing(s)  // auto-push fires after the summary lands
             } else if s.status == .ready {
                 self.autoPushIfEnabled(s)

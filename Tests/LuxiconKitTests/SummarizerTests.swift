@@ -14,6 +14,23 @@ final class MockChat: SummaryChat {
     }
 }
 
+@Suite struct SummarizerModelManagementTests {
+    @Test func backendsHaveDefaultModels() {
+        #expect(MeetingSummarizer.defaultModelId(for: .qwen35) == "aufklarer/Qwen3.5-0.8B-Chat-MLX")
+        #expect(MeetingSummarizer.defaultModelId(for: .gemma4) == "aufklarer/gemma-4-E2B-it-MLX-4bit")
+    }
+
+    @Test func cacheDirectoryIsPerModel() throws {
+        // The app deletes exactly this directory on "Remove Model" — it must be
+        // model-specific so ASR/diarization caches are never touched.
+        let gemma = try MeetingSummarizer.modelCacheDirectory(for: .gemma4)
+        let qwen = try MeetingSummarizer.modelCacheDirectory(for: .qwen35)
+        #expect(gemma.path.contains("gemma-4-E2B-it-MLX-4bit"))
+        #expect(qwen.path.contains("Qwen3.5-0.8B-Chat-MLX"))
+        #expect(gemma != qwen)
+    }
+}
+
 @Suite struct SummarizerBackendTests {
     private func transcript(_ text: String) -> MeetingTranscript {
         MeetingTranscript(

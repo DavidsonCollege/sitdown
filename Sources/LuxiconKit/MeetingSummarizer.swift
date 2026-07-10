@@ -1,4 +1,5 @@
 import Foundation
+import AudioCommon
 import Qwen3Chat
 
 /// A buffered chat completion backend. Both on-device LLM families in
@@ -40,6 +41,32 @@ public final class MeetingSummarizer {
         case qwen35, gemma4
     }
 
+    public static func defaultModelId(for backend: Backend) -> String {
+        switch backend {
+        case .qwen35: return Qwen35MLXChat.defaultModelId
+        case .gemma4: return "aufklarer/gemma-4-E2B-it-MLX-4bit"
+        }
+    }
+
+    /// Where the backend's weights live on disk. The app deletes exactly this
+    /// directory for "Remove Model" — it is model-specific by construction, so
+    /// ASR/diarization caches are never touched.
+    public static func modelCacheDirectory(for backend: Backend) throws -> URL {
+        try HuggingFaceDownloader.getCacheDirectory(for: defaultModelId(for: backend))
+    }
+
+    /// Whether the backend's weights are already on disk (no download needed).
+    public static func isModelDownloaded(_ backend: Backend) -> Bool {
+        guard let dir = try? modelCacheDirectory(for: backend) else { return false }
+        switch backend {
+        case .qwen35:
+            // Qwen weights live in a quantization subdirectory (int4/).
+            return HuggingFaceDownloader.weightsExist(in: dir.appendingPathComponent("int4"))
+        case .gemma4:
+            return HuggingFaceDownloader.weightsExist(in: dir)
+        }
+    }
+
     public static func load(
         backend: Backend = .qwen35,
         modelId: String? = nil,
@@ -51,14 +78,14 @@ public final class MeetingSummarizer {
         switch backend {
         case .qwen35:
             chat = try await Qwen35MLXChat.fromPretrained(
-                modelId: modelId ?? Qwen35MLXChat.defaultModelId,
+                modelId: modelId ?? Self.defaultModelId(for: .qwen35),
                 cacheDir: cacheDir,
                 offlineMode: offlineMode,
                 progressHandler: progress
             )
         case .gemma4:
             chat = try await Gemma4Chat.fromPretrained(
-                modelId: modelId ?? "aufklarer/gemma-4-E2B-it-MLX-4bit",
+                modelId: modelId ?? Self.defaultModelId(for: .gemma4),
                 cacheDir: cacheDir,
                 offlineMode: offlineMode,
                 progressHandler: progress

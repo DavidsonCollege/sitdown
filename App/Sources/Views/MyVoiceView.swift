@@ -11,6 +11,8 @@ struct MyVoiceView: View {
     @State private var isRecording = false
     @State private var isEmbedding = false
     @State private var errorMessage: String?
+    @State private var showEnableConfirmation = false
+    @State private var showRemoveModelConfirmation = false
 
     private static let minSeconds: Double = 8
 
@@ -25,8 +27,10 @@ struct MyVoiceView: View {
                     TextField("Name shown in transcripts", text: $store.myName)
                         .onSubmit { store.save() }
                 }
-                TextField("About you — role, team, current focus", text: $store.myContext, axis: .vertical)
-                    .lineLimit(2...6)
+                if store.aiSummariesEnabled {
+                    TextField("About you — role, team, current focus", text: $store.myContext, axis: .vertical)
+                        .lineLimit(2...6)
+                }
             }
 
             Section {
@@ -117,13 +121,13 @@ struct MyVoiceView: View {
                     Text("Qwen3 (experimental)").tag(ASREngine.qwen3)
                 }
                 .onChange(of: store.asrEngine) { store.save() }
-                Toggle("Summarize automatically", isOn: $store.autoSummarize)
-                    .onChange(of: store.autoSummarize) { store.save() }
             } header: {
                 Text("Transcription engine")
             } footer: {
-                Text("Parakeet is fast and battery-friendly; vocabulary is applied as a correction pass. Qwen3 injects your vocabulary directly into the recognizer (better on unusual names) but downloads ~400 MB more and runs slower. Automatic summaries use an on-device language model (one-time ~400 MB download); nothing leaves the phone.")
+                Text("Parakeet is fast and battery-friendly; vocabulary is applied as a correction pass. Qwen3 injects your vocabulary directly into the recognizer (better on unusual names) but downloads ~400 MB more and runs slower.")
             }
+
+            aiSummariesSection
 
             Section {
                 ShareLink(item: URL(string: "https://github.com/DavidsonCollege/luxicon/releases")!) {
@@ -157,6 +161,89 @@ struct MyVoiceView: View {
             if isRecording { _ = recorder.stop() }
             store.save()
         }
+    }
+
+    /// Opt-in AI features: summaries, list labels, personal context. The
+    /// enable flow is explicit about the ~2.5 GB on-device model download;
+    /// when off, all summary/context UI in the app is hidden.
+    @ViewBuilder
+    private var aiSummariesSection: some View {
+        @Bindable var store = store
+        Section {
+            if let stage = store.summaryModelDownloadStage {
+                HStack {
+                    ProgressView()
+                    Text(stage).font(.footnote).foregroundStyle(.secondary).padding(.leading, 8)
+                }
+            } else if store.aiSummariesEnabled {
+                Label("AI summaries enabled", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                Toggle("Summarize automatically", isOn: $store.autoSummarize)
+                    .onChange(of: store.autoSummarize) { store.save() }
+                Button(role: .destructive) {
+                    showRemoveModelConfirmation = true
+                } label: {
+                    Label("Turn Off & Remove Model", systemImage: "trash")
+                }
+            } else {
+                Button {
+                    showEnableConfirmation = true
+                } label: {
+                    Label("Enable AI Summaries…", systemImage: "sparkles")
+                }
+                if let error = store.summaryModelError {
+                    Text(error).font(.footnote).foregroundStyle(.red)
+                }
+            }
+        } header: {
+            Text("AI summaries")
+        } footer: {
+            if store.aiSummariesEnabled {
+                Text("Each 1-on-1 gets a summary and a one-line topic label, informed by the background notes you keep about yourself and each person. Everything runs on this phone; removing the model frees \(SummaryService.approximateDownload) and hides these features.")
+            } else {
+                Text("Summarize each 1-on-1 on this phone and use your background notes about people to interpret them. Requires a one-time \(SummaryService.approximateDownload) model download to this device — nothing leaves the phone.")
+            }
+        }
+        .confirmationDialog(
+            "Download the AI model?",
+            isPresented: $showEnableConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Download \(SummaryService.approximateDownload) & Enable") {
+                store.enableAISummaries()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(enableDialogMessage)
+        }
+        .confirmationDialog(
+            "Turn off AI summaries?",
+            isPresented: $showRemoveModelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Model (frees \(SummaryService.approximateDownload))", role: .destructive) {
+                store.disableAISummaries(deleteModel: true)
+            }
+            Button("Keep Model, Just Turn Off") {
+                store.disableAISummaries(deleteModel: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Existing summaries stay on your sessions either way. Keeping the model means re-enabling later is instant; removing it frees the space but re-enabling downloads it again.")
+        }
+    }
+
+    private var enableDialogMessage: String {
+        var message = "The model is stored on this iPhone and used only on-device. "
+            + "Wi-Fi is recommended for the download."
+        if let free = Store.availableDiskSpace() {
+            let freeText = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
+            message += " You have \(freeText) available."
+            if free < 4_000_000_000 {
+                message += " Storage is tight — consider freeing space first."
+            }
+        }
+        return message
     }
 
     private func startEnrollment() {

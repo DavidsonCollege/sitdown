@@ -47,14 +47,18 @@ struct PersonDetailView: View {
                 .listRowBackground(Color.clear)
             }
 
-            Section {
-                TextField("Role, projects, current threads…",
-                          text: contextBinding, axis: .vertical)
-                    .lineLimit(2...6)
-            } header: {
-                Text("Context")
-            } footer: {
-                Text("Background the summarizer uses to interpret your 1-on-1s — e.g. “Senior sysadmin; runs the identity platform; discussing promotion this quarter.” Stays on this device unless you configure people sync — then the synced file's context wins.")
+            // Personal context is part of the opt-in AI summaries feature
+            // (My Voice → AI summaries); hidden while it's off.
+            if store.aiSummariesEnabled {
+                Section {
+                    TextField("Role, projects, current threads…",
+                              text: contextBinding, axis: .vertical)
+                        .lineLimit(2...6)
+                } header: {
+                    Text("Context")
+                } footer: {
+                    Text("Background the summarizer uses to interpret your 1-on-1s — e.g. “Senior sysadmin; runs the identity platform; discussing promotion this quarter.” Stays on this device unless you configure people sync — then the synced file's context wins.")
+                }
             }
 
             if sessions.isEmpty {

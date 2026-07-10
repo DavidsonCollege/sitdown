@@ -171,37 +171,44 @@ struct TranscriptView: View {
         }
     }
 
+    /// Hidden entirely while AI summaries are off — except that summaries
+    /// generated before the feature was turned off stay readable/sharable
+    /// (regeneration still requires re-enabling in My Voice).
     @ViewBuilder
     private var summarySection: some View {
-        Section("Summary") {
-            if let summary = session.summary {
-                Text(LocalizedStringKey(summary.overview))
-                    .font(.callout)
-                    .padding(.vertical, 2)
-                if let summaryURL {
-                    ShareLink(item: summaryURL) {
-                        Label("Share Summary", systemImage: "square.and.arrow.up")
+        if store.aiSummariesEnabled || session.summary != nil {
+            Section("Summary") {
+                if let summary = session.summary {
+                    Text(LocalizedStringKey(summary.overview))
+                        .font(.callout)
+                        .padding(.vertical, 2)
+                    if let summaryURL {
+                        ShareLink(item: summaryURL) {
+                            Label("Share Summary", systemImage: "square.and.arrow.up")
+                        }
                     }
-                }
-                Button {
-                    var s = session
-                    s.summary = nil
-                    s.listLabel = nil
-                    store.update(s)
-                    store.startSummarizing(s)
-                } label: {
-                    Label("Regenerate Summary", systemImage: "arrow.clockwise")
-                }
-            } else if let stage = store.processing.summarizing[session.id] {
-                HStack {
-                    ProgressView()
-                    Text(stage).font(.footnote).foregroundStyle(.secondary).padding(.leading, 8)
-                }
-            } else {
-                Button {
-                    store.startSummarizing(session)
-                } label: {
-                    Label("Generate Summary", systemImage: "sparkles")
+                    if store.aiSummariesEnabled {
+                        Button {
+                            var s = session
+                            s.summary = nil
+                            s.listLabel = nil
+                            store.update(s)
+                            store.startSummarizing(s)
+                        } label: {
+                            Label("Regenerate Summary", systemImage: "arrow.clockwise")
+                        }
+                    }
+                } else if let stage = store.processing.summarizing[session.id] {
+                    HStack {
+                        ProgressView()
+                        Text(stage).font(.footnote).foregroundStyle(.secondary).padding(.leading, 8)
+                    }
+                } else {
+                    Button {
+                        store.startSummarizing(session)
+                    } label: {
+                        Label("Generate Summary", systemImage: "sparkles")
+                    }
                 }
             }
         }

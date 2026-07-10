@@ -62,8 +62,18 @@ final class Store {
     var vocabularyEntries: [VocabularyEntry] = []
     /// Which ASR engine transcribes turns.
     var asrEngine: ASREngine = .parakeet
-    /// Generate a summary automatically after each transcription.
+    /// Master switch for the AI features (summaries, list labels, personal
+    /// context). Off by default: enabling requires an explicit opt-in that
+    /// downloads the ~2.5 GB on-device model. When off, the summary and
+    /// context UI is hidden entirely.
+    var aiSummariesEnabled = false
+    /// Generate a summary automatically after each transcription (only
+    /// meaningful while `aiSummariesEnabled`).
     var autoSummarize = true
+    /// Transient model-download progress for the enable flow; not persisted.
+    var summaryModelDownloadStage: String?
+    /// Transient error from the last enable attempt; not persisted.
+    var summaryModelError: String?
     /// Mac sync: pairing token, optional manual host (for squashed-mDNS
     /// networks), and whether to push automatically after each session.
     var syncToken: String = ""
@@ -118,6 +128,7 @@ final class Store {
         var vocabularySourceURL: String?
         var vocabularyHeaders: [HTTPHeader]?
         var vocabularyLastSync: Date?
+        var aiSummariesEnabled: Bool?
         var autoSummarize: Bool?
         var syncToken: String?
         var syncHost: String?
@@ -155,6 +166,8 @@ final class Store {
                 ofItemAtPath: url.path)
         }
         load()
+        // Builds 1-9 cached the old Qwen summarizer (~400 MB); reclaim it.
+        removeLegacySummaryModel()
         // Recover sessions stuck mid-processing by an app kill.
         for i in sessions.indices where sessions[i].status == .processing {
             sessions[i].status = .recorded
@@ -196,6 +209,10 @@ final class Store {
         asrEngine = persisted.asrEngine ?? .parakeet
         vocabularySourceURL = persisted.vocabularySourceURL ?? ""
         vocabularyLastSync = persisted.vocabularyLastSync
+        // Existing users (builds 1-9) had always-on summarization via the old
+        // 0.8B model; the feature is now an explicit opt-in with a larger
+        // model, so it starts off for everyone. Old summaries stay readable.
+        aiSummariesEnabled = persisted.aiSummariesEnabled ?? false
         autoSummarize = persisted.autoSummarize ?? true
         syncHost = persisted.syncHost ?? ""
         autoPushToMac = persisted.autoPushToMac ?? false
@@ -232,6 +249,7 @@ final class Store {
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
             vocabularyHeaders: nil,  // Keychain-only since build 6
             vocabularyLastSync: vocabularyLastSync,
+            aiSummariesEnabled: aiSummariesEnabled,
             autoSummarize: autoSummarize,
             syncToken: nil,          // Keychain-only since build 6
             syncHost: syncHost.isEmpty ? nil : syncHost,
