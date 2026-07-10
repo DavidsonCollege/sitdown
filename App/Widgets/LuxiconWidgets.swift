@@ -17,9 +17,9 @@ struct RecordingLiveActivity: Widget {
         ActivityConfiguration(for: RecordingActivityAttributes.self) { context in
             // Lock screen / banner
             HStack(spacing: 12) {
-                Image(systemName: "record.circle")
+                Image(systemName: context.state.isOffRecord ? "pause.circle.fill" : "record.circle")
                     .font(.title2)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(context.state.isOffRecord ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recording 1-on-1")
                         .font(.headline)
@@ -30,10 +30,16 @@ struct RecordingLiveActivity: Widget {
                         .privacySensitive()
                 }
                 Spacer()
-                Text(timerInterval: timerRange(context), countsDown: false)
-                    .font(.title3.weight(.semibold))
-                    .monospacedDigit()
-                    .frame(maxWidth: 70)
+                if context.state.isOffRecord {
+                    Label("Off the record", systemImage: "lock.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(timerInterval: timerRange(context), countsDown: false)
+                        .font(.title3.weight(.semibold))
+                        .monospacedDigit()
+                        .frame(maxWidth: 70)
+                }
             }
             .padding()
         } dynamicIsland: { context in
@@ -44,10 +50,14 @@ struct RecordingLiveActivity: Widget {
                         .font(.callout.weight(.semibold))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(timerInterval: timerRange(context), countsDown: false)
-                        .monospacedDigit()
-                        .font(.callout.weight(.semibold))
-                        .frame(maxWidth: 60)
+                    if context.state.isOffRecord {
+                        Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                    } else {
+                        Text(timerInterval: timerRange(context), countsDown: false)
+                            .monospacedDigit()
+                            .font(.callout.weight(.semibold))
+                            .frame(maxWidth: 60)
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Text("1-on-1 with \(context.attributes.personName)")
@@ -59,9 +69,13 @@ struct RecordingLiveActivity: Widget {
                 Image(systemName: "record.circle")
                     .foregroundStyle(.red)
             } compactTrailing: {
-                Text(timerInterval: timerRange(context), countsDown: false)
-                    .monospacedDigit()
-                    .frame(maxWidth: 48)
+                if context.state.isOffRecord {
+                    Image(systemName: "lock.fill")
+                } else {
+                    Text(timerInterval: timerRange(context), countsDown: false)
+                        .monospacedDigit()
+                        .frame(maxWidth: 48)
+                }
             } minimal: {
                 Image(systemName: "record.circle")
                     .foregroundStyle(.red)

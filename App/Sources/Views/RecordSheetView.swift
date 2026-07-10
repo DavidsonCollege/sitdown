@@ -175,11 +175,13 @@ struct RecordSheetView: View {
 
     private func goOffRecord() {
         recorder.pause()
+        RecordingActivityController.shared.setOffRecord(true, elapsed: recorder.duration)
         withAnimation(.easeInOut(duration: 0.3)) { isOffRecord = true }
     }
 
     private func resumeRecording() {
         recorder.resume()
+        RecordingActivityController.shared.setOffRecord(false, elapsed: recorder.duration)
         withAnimation(.easeInOut(duration: 0.3)) { isOffRecord = false }
     }
 

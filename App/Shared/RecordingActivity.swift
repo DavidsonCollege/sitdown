@@ -10,6 +10,7 @@ import AppIntents
 struct RecordingActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var startDate: Date
+        var isOffRecord = false
     }
     var personName: String
 }
