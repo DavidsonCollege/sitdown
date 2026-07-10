@@ -13,6 +13,7 @@ struct MyVoiceView: View {
     @State private var errorMessage: String?
     @State private var showEnableConfirmation = false
     @State private var showRemoveModelConfirmation = false
+    @State private var showingAboutGiving = false
 
     private static let minSeconds: Double = 8
 
@@ -152,11 +153,33 @@ struct MyVoiceView: View {
                 Text("Send transcripts and summaries to a Mac running `luxicon-mcp listen`, so you can query them from Claude. Everything stays on your local network. Use “Send installer link to your Mac” to AirDrop the listener installer over, then enter the Mac's address if it isn't found automatically (common on enterprise Wi-Fi that blocks discovery).")
             }
 
+            Section {
+                Button {
+                    showingAboutGiving = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image("AppIconLarge")
+                            .resizable()
+                            .frame(width: 30, height: 30)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        Text("About Luxicon & Giving")
+                            .foregroundStyle(.primary)
+                    }
+                }
+            } header: {
+                Text("Davidson College")
+            } footer: {
+                Text("Luxicon is a free, open-source service of Davidson College.")
+            }
+
             if let errorMessage {
                 Text(errorMessage).foregroundStyle(.red).font(.footnote)
             }
         }
         .navigationTitle("My Voice")
+        .sheet(isPresented: $showingAboutGiving) {
+            AboutGivingView()
+        }
         .onDisappear {
             if isRecording { _ = recorder.stop() }
             store.save()
