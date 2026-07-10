@@ -18,6 +18,7 @@ struct RecordSheetView: View {
     @State private var startError: String?
     @State private var saving = false
     @State private var confirmingDiscard = false
+    @State private var isOffRecord = false
 
     var body: some View {
         NavigationStack {
@@ -71,6 +72,19 @@ struct RecordSheetView: View {
                     // a sub-second tap would create an unprocessable session.
                     .disabled(saving || !recorder.isRecording || recorder.duration < 1)
                     .padding(.horizontal)
+
+                    Button {
+                        goOffRecord()
+                    } label: {
+                        Label("Go off the record", systemImage: "lock")
+                            .font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.secondary)
+                    .disabled(saving || !recorder.isRecording)
+                    .padding(.horizontal)
                 }
                 .padding(.bottom, 24)
             }
@@ -91,6 +105,16 @@ struct RecordSheetView: View {
             }
             .onAppear { begin() }
             .onDisappear { store.setRecordingActive(false) }
+            .overlay {
+                if isOffRecord {
+                    OffRecordView(
+                        personName: person.name,
+                        pausedAt: recorder.duration,
+                        onResume: resumeRecording
+                    )
+                    .transition(.opacity)
+                }
+            }
         }
     }
 
@@ -147,6 +171,22 @@ struct RecordSheetView: View {
                 startError = "Could not start recording: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func goOffRecord() {
+        recorder.pause()
+        RecordingActivityController.shared.setOffRecord(true, elapsed: recorder.duration)
+        withAnimation(.easeInOut(duration: 0.3)) { isOffRecord = true }
+    }
+
+    private func resumeRecording() {
+        recorder.resume()
+        // If resume() failed the recorder stays paused (and sets runtimeError);
+        // keep the off-record screen up rather than showing a live-looking screen
+        // that isn't capturing. The user can tap Resume again.
+        guard !recorder.isPaused else { return }
+        RecordingActivityController.shared.setOffRecord(false, elapsed: recorder.duration)
+        withAnimation(.easeInOut(duration: 0.3)) { isOffRecord = false }
     }
 
     private func discard() {

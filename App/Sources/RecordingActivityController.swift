@@ -24,6 +24,21 @@ final class RecordingActivityController {
         activityId = activity?.id
     }
 
+    /// Update the running activity to show / clear the off-record state. On
+    /// resume, `elapsed` is the true active duration; the start date is shifted
+    /// to `now - elapsed` so the system-rendered timer resumes at the right
+    /// value instead of counting the off-record gap.
+    func setOffRecord(_ off: Bool, elapsed: TimeInterval) {
+        guard let id = activityId else { return }
+        let startDate = Date().addingTimeInterval(-elapsed)
+        let state = RecordingActivityAttributes.ContentState(startDate: startDate, isOffRecord: off)
+        Task.detached {
+            for activity in Activity<RecordingActivityAttributes>.activities where activity.id == id {
+                await activity.update(.init(state: state, staleDate: nil))
+            }
+        }
+    }
+
     func end() {
         guard let id = activityId else { return }
         activityId = nil
