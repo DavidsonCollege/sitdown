@@ -210,6 +210,25 @@ import Foundation
         #expect(!MeetingSummarizer.isTooThin(stackMap))
     }
 
+    @Test func cleanLabelNormalizesModelOutput() {
+        // The refine pass returns raw model text; cleaning must strip quotes,
+        // prefixes, and extra lines, and un-shout all-caps labels.
+        #expect(MeetingSummarizer.cleanLabel("\"Budget, hiring plan\"", fallback: "f") == "Budget, hiring plan")
+        #expect(MeetingSummarizer.cleanLabel("Label: Budget, hiring plan", fallback: "f") == "Budget, hiring plan")
+        #expect(MeetingSummarizer.cleanLabel("Budget review\nExtra prose.", fallback: "f") == "Budget review")
+        #expect(MeetingSummarizer.cleanLabel("STACK MAP PRICING, VENDOR FIT", fallback: "f")
+            == "Stack Map Pricing, Vendor Fit")
+        #expect(MeetingSummarizer.cleanLabel("   ", fallback: "fallback") == "fallback")
+        let long = String(repeating: "topic, ", count: 20)
+        #expect(MeetingSummarizer.cleanLabel(long, fallback: "f").count <= 50)
+    }
+
+    @Test func labelRefinePromptDemandsTerseNamelessTopics() {
+        #expect(MeetingSummarizer.labelRefinePrompt.contains("50"))
+        #expect(MeetingSummarizer.labelRefinePrompt.contains("no people's names"))
+        #expect(MeetingSummarizer.labelRefinePrompt.contains("never all caps"))
+    }
+
     @Test func headlineNeverLeaksSummaryMarker() {
         // A model that emits HEADLINE and SUMMARY on one line must not leak the
         // marker or overview into the list label (the observed "SUMMARY:" bug).

@@ -61,8 +61,12 @@ struct LuxiconCLI {
                 return (String(spec[..<eq]), String(spec[spec.index(after: eq)...]))
             }
             var context: [SummaryParticipant] = []
+            var secondPass = false
+            var modelId: String?
+            var modelDir: String?
             var j = 2
             while j < args.count {
+                if args[j] == "--second-pass" { secondPass = true; j += 1; continue }
                 guard args.indices.contains(j + 1) else {
                     throw ValidationError("\(args[j]) expects a value")
                 }
@@ -74,13 +78,19 @@ struct LuxiconCLI {
                     let (n, p) = try nameEq(args[j + 1])
                     let text = try String(contentsOf: URL(fileURLWithPath: p), encoding: .utf8)
                     context.append(SummaryParticipant(name: n, context: text))
+                case "--model": modelId = args[j + 1]
+                case "--model-dir": modelDir = args[j + 1]  // local dir with int4/ inside
                 default: throw ValidationError("unknown option \(args[j])")
                 }
                 j += 2
             }
 
-            print("Loading summarizer model (downloads ~404 MB on first run)…")
-            let summarizer = try await MeetingSummarizer.load { p, stage in
+            print("Loading summarizer model (downloads on first run)…")
+            let summarizer = try await MeetingSummarizer.load(
+                modelId: modelId,
+                cacheDir: modelDir.map { URL(fileURLWithPath: $0) },
+                offlineMode: modelDir != nil
+            ) { p, stage in
                 print(String(format: "  [%3.0f%%] %@", p * 100, stage))
             }
             let isEmpty = MeetingSummarizer.isEmpty(transcript)
@@ -89,6 +99,12 @@ struct LuxiconCLI {
             let result = try summarizer.summarize(transcript, context: context)
             print("=== LIST LABEL (\(result.headline.count) chars) ===")
             print(result.headline)
+            if secondPass {
+                let refined = try summarizer.refineLabel(
+                    headline: result.headline, overview: result.overview)
+                print("\n=== REFINED LABEL (\(refined.count) chars) ===")
+                print(refined)
+            }
             print("\n=== OVERVIEW ===")
             print(result.overview)
             return

@@ -26,9 +26,17 @@ public final class MeetingSummarizer {
     }
 
     public static func load(
+        modelId: String? = nil,
+        cacheDir: URL? = nil,
+        offlineMode: Bool = false,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingSummarizer {
-        let chat = try await Qwen35MLXChat.fromPretrained(progressHandler: progress)
+        let chat = try await Qwen35MLXChat.fromPretrained(
+            modelId: modelId ?? Qwen35MLXChat.defaultModelId,
+            cacheDir: cacheDir,
+            offlineMode: offlineMode,
+            progressHandler: progress
+        )
         return MeetingSummarizer(chat: chat)
     }
 
@@ -53,6 +61,53 @@ public final class MeetingSummarizer {
             sampling: sampling
         )
         return Self.parse(raw, fallbackTitle: transcript.title)
+    }
+
+    /// Second pass: rewrite the first-pass headline into the terse
+    /// notification-style label the conversations list needs. A small model
+    /// follows one focused rewrite instruction far better than a format clause
+    /// buried in the main summarization prompt.
+    public func refineLabel(headline: String, overview: String) throws -> String {
+        var sampling = ChatSamplingConfig.default
+        sampling.temperature = 0.0
+        // Generous budget: the pipeline may spend tokens on a stripped
+        // <think> block before the visible label; too small a cap yields an
+        // empty answer (and a silent fallback to the unrefined headline).
+        sampling.maxTokens = 256
+        let raw = try chat.generate(
+            messages: [
+                ChatMessage(role: .system, content: Self.labelRefinePrompt),
+                ChatMessage(role: .user, content: "\(headline)\n\n\(overview)"),
+            ],
+            sampling: sampling
+        )
+        return Self.cleanLabel(raw, fallback: headline)
+    }
+
+    static let labelRefinePrompt = """
+    You write one-line topic labels for a meeting list, like iOS notification \
+    summaries. Given a meeting summary, respond with ONLY the label: 2-4 \
+    topics, comma-separated, under 50 characters, Title Case (never all caps), \
+    no people's names, no full sentences, no quotes, no trailing period.
+    """
+
+    /// Deterministic cleanup of the refine pass's raw output.
+    static func cleanLabel(_ raw: String, fallback: String) -> String {
+        var label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // First line only, drop an echoed "Label:" prefix and wrapping quotes.
+        label = String(label.prefix(while: { $0 != "\n" }))
+        if let colon = label.range(of: "Label:", options: .caseInsensitive) {
+            label = String(label[colon.upperBound...])
+        }
+        label = label.trimmingCharacters(in: CharacterSet(charactersIn: " \"'“”."))
+        // Un-shout: an all-caps label reads as yelling in the list.
+        if !label.isEmpty, label == label.uppercased(), label != label.lowercased() {
+            label = label.lowercased().localizedCapitalized
+        }
+        if label.count > 50 {
+            label = String(label.prefix(47)).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return label.isEmpty ? fallback : label
     }
 
     // MARK: - Empty transcripts (handled in code, never sent to the model)
