@@ -114,6 +114,7 @@ final class Recorder: @unchecked Sendable {
         engine.stop()
         isRecording = false
         isInterrupted = false
+        isPaused = false
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -151,8 +152,6 @@ final class Recorder: @unchecked Sendable {
     /// with the current input format (the same recovery path interruptions use).
     func resume() {
         guard isRecording, isPaused else { return }
-        isPaused = false
-        isInterrupted = false
         do {
             #if os(iOS)
             let session = AVAudioSession.sharedInstance()
@@ -160,6 +159,8 @@ final class Recorder: @unchecked Sendable {
             try session.setActive(true)
             #endif
             try startEngine()
+            isPaused = false
+            isInterrupted = false
         } catch {
             setRuntimeError("Couldn't resume recording: \(error.localizedDescription). Stop to save what was captured.")
         }
