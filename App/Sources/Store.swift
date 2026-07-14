@@ -17,6 +17,14 @@ struct Person: Codable, Identifiable, Hashable {
 enum SummaryEngine: String, Codable {
     case appleIntelligence, gemma
 
+    /// Engine used when the user hasn't picked one: Apple Intelligence when
+    /// the OS offers it — it runs out-of-process, so none of the MLX memory
+    /// cost lands on the app — otherwise Gemma (pre-A17 Pro devices, older
+    /// OS, or Apple Intelligence turned off in Settings).
+    static var systemDefault: SummaryEngine {
+        AppleIntelligence.status == .available ? .appleIntelligence : .gemma
+    }
+
     var backend: MeetingSummarizer.Backend {
         switch self {
         case .appleIntelligence: return .appleIntelligence

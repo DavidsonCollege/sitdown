@@ -62,10 +62,11 @@ actor SummaryService {
 }
 
 extension Store {
-    /// Backend behind the user's engine choice (Gemma when unset, matching
-    /// the pre-engine-picker builds).
+    /// Backend behind the user's engine choice. Unset (pre-engine-picker
+    /// builds) now defaults to Apple Intelligence where available — an
+    /// explicit engine choice is always honored.
     var currentSummaryBackend: MeetingSummarizer.Backend {
-        (summaryEngine ?? .gemma).backend
+        (summaryEngine ?? .systemDefault).backend
     }
 
     /// Whether the current engine is ready without a download.
