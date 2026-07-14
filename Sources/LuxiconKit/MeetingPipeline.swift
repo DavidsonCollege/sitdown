@@ -1,8 +1,8 @@
 import Foundation
 import AudioCommon
+import MLX
 import SpeechVAD
 import ParakeetASR
-import Qwen3ASR
 
 /// One speaker turn's worth of transcription, engine-agnostic.
 public protocol TurnTranscriber: AnyObject {
@@ -20,22 +20,22 @@ extension ParakeetASRModel: TurnTranscriber {
     }
 }
 
-/// Qwen3-ASR (MLX, GPU). Accepts a context prompt for true decoder-level
-/// vocabulary biasing. Heavier than Parakeet; foreground-only.
-extension Qwen3ASRModel: TurnTranscriber {
-    public var supportsContext: Bool { true }
-    public func transcribeTurn(_ audio: [Float], sampleRate: Int, context: String?) -> TranscriptionResult {
-        let text = transcribe(audio: audio, sampleRate: sampleRate, context: context)
-        return TranscriptionResult(text: text)
-    }
-}
-
-/// Which ASR engine transcribes speaker turns.
+/// Which ASR engine transcribes speaker turns. Single-cased today: the
+/// experimental Qwen3-ASR engine was removed 2026-07 (unstable on device;
+/// Apple Intelligence transcription is the planned successor), but the enum
+/// stays — it is persisted in store.json and is the seam a future engine
+/// plugs back into.
 public enum ASREngine: String, Codable, Sendable {
     /// Parakeet TDT — CoreML/ANE, fast, the default.
     case parakeet
-    /// Qwen3-ASR 0.6B 4-bit — MLX/GPU, supports vocabulary context injection.
-    case qwen3
+
+    /// Tolerant decode: an engine persisted by an older build (e.g. the
+    /// retired "qwen3") falls back to the default instead of failing the
+    /// entire store.json decode and taking the user's library with it.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ASREngine(rawValue: raw) ?? .parakeet
+    }
 }
 
 /// End-to-end 1-on-1 processing: diarize → per-turn transcription → speaker naming.
@@ -48,6 +48,11 @@ public final class MeetingPipeline {
 
     /// Sample rate `process` expects. Load or record audio at this rate.
     public static let sampleRate = 16000
+
+    /// Ceiling for MLX's freed-buffer cache while `process` runs. Large enough
+    /// to reuse buffers within a window batch, small enough that a long
+    /// recording's parade of unique tensor shapes can't accumulate gigabytes.
+    static let gpuCacheLimit = 512 * 1024 * 1024
 
     public struct Options: Sendable {
         /// Hard cap on distinct speakers; extra diarized speakers are folded
@@ -98,10 +103,6 @@ public final class MeetingPipeline {
             asr = try await ParakeetASRModel.fromPretrained(progressHandler: { p, stage in
                 progress?(0.5 + p * 0.5, stage)
             })
-        case .qwen3:
-            asr = try await Qwen3ASRModel.fromPretrained(progressHandler: { p, stage in
-                progress?(0.5 + p * 0.5, stage)
-            })
         }
         return MeetingPipeline(diarizer: diarizer, asr: asr)
     }
@@ -132,6 +133,14 @@ public final class MeetingPipeline {
         let sr = Self.sampleRate
         let duration = Double(audio.count) / Double(sr)
 
+        // MLX keeps every freed GPU buffer in a cache, and diarization runs
+        // ~3 embedding forward passes per 10 s window, each with a unique
+        // input length — so on long recordings the cache only ever grows
+        // (a 45-minute meeting reached iOS's ~6 GB per-process limit and was
+        // jetsam-killed). Cap the cache for the run and drop it afterwards.
+        MLX.Memory.cacheLimit = min(MLX.Memory.cacheLimit, Self.gpuCacheLimit)
+        defer { MLX.Memory.clearCache() }
+
         // 1. Diarize (≈ first 60% of the work)
         var result = diarizer.diarize(audio: audio, sampleRate: sr, config: options.diarization) { p, stage in
             progress?(Double(p) * 0.6, stage)
@@ -157,7 +166,7 @@ public final class MeetingPipeline {
             let hi = min(audio.count, Int((span.end + options.asrPadding) * Double(sr)))
             guard hi > lo else { continue }
             let slice = Array(audio[lo..<hi])
-            let asrResult = asr.transcribeTurn(slice, sampleRate: sr, context: context)
+            let asrResult = Self.transcribeBounded(slice, asr: asr, sampleRate: sr, context: context)
             var text = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
             text = VocabularyCorrector.correct(text, entries: vocabulary)
             guard !text.isEmpty else { continue }
@@ -182,6 +191,72 @@ public final class MeetingPipeline {
         }
         progress?(1.0, "Done")
         return transcript
+    }
+
+    // MARK: - Bounded transcription
+
+    /// Longest audio span fed to the ASR engine in one call; bounds the
+    /// autorelease accumulation per pool drain in `transcribeBounded`.
+    static let maxASRChunkSeconds: TimeInterval = 60
+
+    /// Split `sampleCount` samples into consecutive chunks of at most
+    /// `maxSeconds`. A sub-second tail is folded into the previous chunk —
+    /// it can't carry a word, and some engines choke on near-empty input —
+    /// so the last chunk may slightly exceed `maxSeconds` by design.
+    static func chunkRanges(sampleCount: Int, sampleRate: Int, maxSeconds: TimeInterval) -> [Range<Int>] {
+        guard sampleCount > 0 else { return [] }
+        let maxLen = max(1, Int(maxSeconds * Double(sampleRate)))
+        guard sampleCount > maxLen else { return [0..<sampleCount] }
+        var ranges: [Range<Int>] = []
+        var start = 0
+        while start < sampleCount {
+            let end = min(start + maxLen, sampleCount)
+            ranges.append(start..<end)
+            start = end
+        }
+        if let last = ranges.last, ranges.count > 1, last.count < sampleRate {
+            ranges.removeLast()
+            let previous = ranges.removeLast()
+            ranges.append(previous.lowerBound..<last.upperBound)
+        }
+        return ranges
+    }
+
+    /// Run the ASR engine over one turn's audio in bounded chunks, each
+    /// inside its own autoreleasepool.
+    ///
+    /// CoreML predictions autorelease their output buffers, and `process`
+    /// runs synchronously on one thread with no suspension points — nothing
+    /// drains until the whole meeting is done. On a 45-minute recording that
+    /// accumulated ANE-backed buffers from hundreds of thousands of decoder
+    /// predictions until CoreML's E5 runtime failed to bind one and raised an
+    /// uncatchable NSException (MLE5BindEmptyMemoryObjectToPort → SIGABRT).
+    /// Draining per chunk keeps the pool bounded regardless of turn length.
+    static func transcribeBounded(
+        _ samples: [Float], asr: any TurnTranscriber, sampleRate: Int, context: String?
+    ) -> TranscriptionResult {
+        let ranges = chunkRanges(
+            sampleCount: samples.count, sampleRate: sampleRate, maxSeconds: maxASRChunkSeconds)
+        if ranges.count <= 1 {
+            return autoreleasepool { asr.transcribeTurn(samples, sampleRate: sampleRate, context: context) }
+        }
+        var texts: [String] = []
+        var confidenceSum: Float = 0
+        var confidenceWeight = 0
+        for range in ranges {
+            let piece = autoreleasepool {
+                asr.transcribeTurn(Array(samples[range]), sampleRate: sampleRate, context: context)
+            }
+            let text = piece.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            texts.append(text)
+            confidenceSum += piece.confidence * Float(range.count)
+            confidenceWeight += range.count
+        }
+        return TranscriptionResult(
+            text: texts.joined(separator: " "),
+            confidence: confidenceWeight > 0 ? confidenceSum / Float(confidenceWeight) : 0
+        )
     }
 
     // MARK: - Steps (internal, unit-testable)
