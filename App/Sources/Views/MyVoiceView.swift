@@ -290,7 +290,7 @@ struct MyVoiceView: View {
     /// abandoned Gemma download) flips back to the previous engine.
     private var engineBinding: Binding<SummaryEngine> {
         Binding(
-            get: { store.summaryEngine ?? .gemma },
+            get: { store.summaryEngine ?? .systemDefault },
             set: { store.switchSummaryEngine(to: $0) }
         )
     }
