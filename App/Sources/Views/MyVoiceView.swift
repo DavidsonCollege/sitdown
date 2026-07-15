@@ -11,8 +11,6 @@ struct MyVoiceView: View {
     @State private var isRecording = false
     @State private var isEmbedding = false
     @State private var errorMessage: String?
-    @State private var showEnableConfirmation = false
-    @State private var showRemoveModelConfirmation = false
     @State private var showingAboutGiving = false
 
     private static let minSeconds: Double = 8
@@ -142,7 +140,6 @@ struct MyVoiceView: View {
             )
 
             if #available(iOS 26.0, *) {
-                @Bindable var store = store
                 Section {
                     Picker("Engine", selection: $store.asrEngineChoice) {
                         Text("Automatic (recommended)").tag(ASREngine?.none)
@@ -213,9 +210,12 @@ struct MyVoiceView: View {
         }
     }
 
-    /// Opt-in AI features: summaries, list labels, personal context. The
-    /// enable flow is explicit about the ~2.5 GB on-device model download;
-    /// when off, all summary/context UI in the app is hidden.
+    /// Opt-in AI features: summaries, list labels, personal context.
+    /// Summaries require Apple Intelligence (iPhone 15 Pro or later on
+    /// iOS 26 or later); on other devices this section states the
+    /// requirement — exporting a transcript to any AI assistant is the
+    /// designed alternative, not a consolation. When off, all
+    /// summary/context UI in the app is hidden.
     @ViewBuilder
     private var aiSummariesSection: some View {
         @Bindable var store = store
@@ -228,87 +228,35 @@ struct MyVoiceView: View {
             } else if store.aiSummariesEnabled {
                 Label("AI summaries enabled", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
-                Picker("Engine", selection: engineBinding) {
-                    Text(SummaryEngine.appleIntelligence.displayName)
-                        .tag(SummaryEngine.appleIntelligence)
-                        .selectionDisabled(AppleIntelligence.status != .available)
-                    Text(SummaryEngine.gemma.displayName)
-                        .tag(SummaryEngine.gemma)
-                }
                 Toggle("Summarize automatically", isOn: $store.autoSummarize)
                     .onChange(of: store.autoSummarize) { store.save() }
                 if let error = store.summaryModelError {
                     Text(error).font(.footnote).foregroundStyle(.red)
                 }
                 Button(role: .destructive) {
-                    showRemoveModelConfirmation = true
+                    store.disableAISummaries()
                 } label: {
-                    Label("Turn Off AI Summaries…", systemImage: "trash")
+                    Label("Turn Off AI Summaries", systemImage: "sparkles.slash")
                 }
-            } else {
+            } else if AppleIntelligence.status == .available {
                 Button {
-                    showEnableConfirmation = true
+                    store.enableAISummaries()
                 } label: {
-                    Label("Enable AI Summaries…", systemImage: "sparkles")
+                    Label("Enable AI Summaries", systemImage: "sparkles")
                 }
                 if let error = store.summaryModelError {
                     Text(error).font(.footnote).foregroundStyle(.red)
                 }
+            } else {
+                Label(summariesUnavailableMessage, systemImage: "sparkles.slash")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         } header: {
             Text("AI summaries")
         } footer: {
             Text(footerText)
         }
-        .confirmationDialog(
-            "Enable AI summaries?",
-            isPresented: $showEnableConfirmation,
-            titleVisibility: .visible
-        ) {
-            if AppleIntelligence.status == .available {
-                Button("Use Apple Intelligence") {
-                    store.enableAISummaries(engine: .appleIntelligence)
-                }
-            }
-            Button("Download \(SummaryService.approximateDownload) & Use Gemma") {
-                store.enableAISummaries(engine: .gemma)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(enableDialogMessage)
-        }
-        .confirmationDialog(
-            "Turn off AI summaries?",
-            isPresented: $showRemoveModelConfirmation,
-            titleVisibility: .visible
-        ) {
-            if MeetingSummarizer.isModelDownloaded(.gemma4) {
-                Button("Remove Gemma Model (frees \(SummaryService.approximateDownload))", role: .destructive) {
-                    store.disableAISummaries(deleteModel: true)
-                }
-                Button("Keep Model, Just Turn Off") {
-                    store.disableAISummaries(deleteModel: false)
-                }
-            } else {
-                Button("Turn Off", role: .destructive) {
-                    store.disableAISummaries(deleteModel: false)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(MeetingSummarizer.isModelDownloaded(.gemma4)
-                ? "Existing summaries stay on your sessions either way. Keeping the model means re-enabling later is instant; removing it frees the space but re-enabling downloads it again."
-                : "Existing summaries stay on your sessions.")
-        }
-    }
-
-    /// Switching engines goes through the Store so a failed switch (e.g. an
-    /// abandoned Gemma download) flips back to the previous engine.
-    private var engineBinding: Binding<SummaryEngine> {
-        Binding(
-            get: { store.summaryEngine ?? .systemDefault },
-            set: { store.switchSummaryEngine(to: $0) }
-        )
     }
 
     private var footerText: String {
@@ -316,55 +264,38 @@ struct MyVoiceView: View {
         if store.aiSummariesEnabled {
             parts.append("Each 1-on-1 gets a summary and a one-line topic label, "
                 + "informed by the background notes you keep about yourself and each "
-                + "person. Everything runs on this phone.")
-            if store.summaryEngine == .appleIntelligence {
-                if ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 {
-                    parts.append("Long meetings are summarized in sections and "
-                        + "stitched together. iOS 27 summarizes longer meetings in one pass.")
-                }
-            } else if let reason = appleUnavailableFootnote {
-                parts.append(reason)
+                + "person. Powered by Apple Intelligence — everything runs on this "
+                + "phone, and turning it off keeps existing summaries.")
+            if ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 {
+                parts.append("Long meetings are summarized in sections and "
+                    + "stitched together. iOS 27 summarizes longer meetings in one pass.")
             }
+        } else if AppleIntelligence.status == .available {
+            parts.append("Summarize each 1-on-1 on this phone, using your background "
+                + "notes about people to interpret them — nothing leaves the phone. "
+                + "Uses Apple Intelligence; no download.")
         } else {
-            parts.append("Summarize each 1-on-1 on this phone and use your background "
-                + "notes about people to interpret them — nothing leaves the phone.")
-            parts.append(AppleIntelligence.status == .available
-                ? "Uses Apple Intelligence, or a downloadable \(SummaryService.approximateDownload) on-device model."
-                : "Requires a one-time \(SummaryService.approximateDownload) model download to this device.")
+            parts.append("You can always export a transcript and summarize it "
+                + "with any AI assistant.")
         }
         return parts.joined(separator: " ")
     }
 
-    /// Why the Apple Intelligence picker row is disabled, in actionable terms.
-    private var appleUnavailableFootnote: String? {
+    /// The summarization gate, in user-actionable terms: what's missing and
+    /// whether it can change (Settings toggle, OS update) or can't (hardware).
+    private var summariesUnavailableMessage: String {
         switch AppleIntelligence.status {
-        case .available: return nil
+        case .available:
+            return ""  // Not shown: the section renders the enable flow instead.
         case .osTooOld:
-            return "Apple Intelligence requires iOS 26 or later."
+            return "Summaries require Apple Intelligence, which needs iOS 26 or later."
         case .deviceNotEligible:
-            return "Apple Intelligence requires iPhone 15 Pro or later — Gemma works on this phone."
+            return "Summaries require Apple Intelligence, which needs an iPhone 15 Pro or later."
         case .notEnabled:
-            return "Turn on Apple Intelligence in Settings to use it here."
+            return "Summaries require Apple Intelligence — turn it on in Settings → Apple Intelligence & Siri."
         case .modelNotReady:
-            return "Apple Intelligence is preparing on this iPhone — try again shortly."
+            return "Summaries require Apple Intelligence, which is still preparing on this iPhone — check back shortly."
         }
-    }
-
-    private var enableDialogMessage: String {
-        var message = AppleIntelligence.status == .available
-            ? "Apple Intelligence uses the model built into this iPhone — no download. "
-                + "Gemma is a one-time \(SummaryService.approximateDownload) download. "
-                + "Either way, summaries are generated only on-device."
-            : "The model is stored on this iPhone and used only on-device. "
-                + "Wi-Fi is recommended for the download."
-        if let free = Store.availableDiskSpace() {
-            let freeText = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
-            message += " You have \(freeText) available."
-            if free < 4_000_000_000 {
-                message += " Storage is tight — consider freeing space first."
-            }
-        }
-        return message
     }
 
     private func startEnrollment() {

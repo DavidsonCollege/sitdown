@@ -44,7 +44,9 @@ public enum TranscriptExport {
         out += "- **Participants:** "
         out += transcript.speakers.map(\.displayName).joined(separator: ", ")
         out += "\n- **Summary generated:** \(summary.generatedAt.formatted(date: .abbreviated, time: .shortened)) (on-device)\n\n"
-        out += summary.overview + "\n"
+        // Normalize on the way out: summaries stored before bullet
+        // normalization existed carry inline "- - item" runs.
+        out += MeetingSummarizer.normalizeBullets(summary.overview) + "\n"
         return out
     }
 

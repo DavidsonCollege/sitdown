@@ -1,12 +1,36 @@
 import Foundation
 import AudioCommon
-import Qwen3Chat
 
-/// A buffered chat completion backend. Both on-device LLM families in
-/// speech-swift (`Qwen35MLXChat`, `Gemma4Chat`) already share this exact
-/// method shape, so the summarizer stays model-agnostic. Async so a
-/// framework-owned backend (Apple Intelligence) can conform; the MLX
-/// backends satisfy it with their synchronous method.
+/// A chat turn for a summarization backend. Defined here since the MLX
+/// backends were retired — the shape they shared, kept so backends stay
+/// swappable behind `SummaryChat`.
+public struct ChatMessage: Sendable, Equatable {
+    public enum Role: Sendable, Equatable { case system, user, assistant }
+    public var role: Role
+    public var content: String
+
+    public init(role: Role, content: String) {
+        self.role = role
+        self.content = content
+    }
+}
+
+/// Sampling knobs a summarization backend understands.
+public struct ChatSamplingConfig: Sendable, Equatable {
+    public var temperature: Float
+    public var maxTokens: Int
+
+    public init(temperature: Float = 0.7, maxTokens: Int = 512) {
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+    }
+
+    public static let `default` = ChatSamplingConfig()
+}
+
+/// A buffered chat completion backend. Async so a framework-owned backend
+/// (Apple Intelligence) can conform; kept as a seam so a future engine can
+/// slot in the way the retired MLX families (Qwen3.5, Gemma 4) once did.
 public protocol SummaryChat {
     /// `nonisolated(nonsending)`: runs on the caller's actor, so an actor can
     /// hold a non-Sendable backend and await this without sending it away.
@@ -42,12 +66,15 @@ public struct StructuredSummary: Sendable {
     }
 }
 
-extension Qwen35MLXChat: SummaryChat {}
-extension Gemma4Chat: SummaryChat {}
-
 /// Background knowledge about a meeting participant, injected into the
 /// summarization prompt at call time — never persisted with the transcript,
 /// so editing context improves the next regeneration.
+/// One display block of a summary overview — see `MeetingSummarizer.overviewBlocks`.
+public enum SummaryOverviewBlock: Equatable, Sendable {
+    case paragraph(String)
+    case bullet(level: Int, text: String)
+}
+
 public struct SummaryParticipant: Sendable, Equatable {
     public var name: String
     public var context: String
@@ -58,76 +85,33 @@ public struct SummaryParticipant: Sendable, Equatable {
     }
 }
 
-/// On-device meeting summarization via Qwen3.5 (MLX, int4 ≈ 404 MB download).
+/// On-device meeting summarization via the Apple Intelligence system model
+/// (FoundationModels): out-of-process, OS-managed weights, no download.
 ///
-/// GPU-bound and synchronous like the rest of the pipeline — run from a
-/// background task, foreground-only (iOS kills background GPU work).
+/// Requires Apple Intelligence — iPhone 15 Pro-class hardware and iOS 26+.
+/// The in-process MLX backends (Qwen3.5, then Gemma 4) were retired 2026-07:
+/// resident multi-GB weights plus prefill activations kept meeting iOS's
+/// per-process memory ceiling on long recordings, and the system model beat
+/// them on speed and quality. On unsupported devices the app offers export
+/// instead — every transcript pastes cleanly into any external assistant.
 public final class MeetingSummarizer {
     private let chat: any SummaryChat
     /// Largest transcript rendering (in characters) sent to the model in one
-    /// pass. Set per backend by `load()` — Apple Intelligence has a much
-    /// smaller context window than the MLX backends' prefill budget. Longer
+    /// pass, derived from the model's context window at load time. Longer
     /// transcripts are split at turn boundaries and summarized in sections.
     let transcriptCharBudget: Int
-    /// True for the MLX backends: cap MLX's freed-buffer cache while loaded
-    /// and drop it after each summarize pass. Without this, a long meeting's
-    /// section passes grow the cache by gigabytes — on iPhone that ends in a
-    /// jetsam kill (same failure MeetingPipeline.process guards against).
-    private let managesGPUCache: Bool
 
-    public init(chat: any SummaryChat, transcriptCharBudget: Int = 20_000,
-                managesGPUCache: Bool = false) {
+    public init(chat: any SummaryChat, transcriptCharBudget: Int = 20_000) {
         self.chat = chat
         self.transcriptCharBudget = transcriptCharBudget
-        self.managesGPUCache = managesGPUCache
-        if managesGPUCache {
-            Qwen35MLXChat.setGPUCacheLimit(MeetingPipeline.gpuCacheLimit)
-        }
     }
 
-    /// Release recyclable GPU buffers after a pass; the next pass re-warms.
-    private func drainGPUCache() {
-        if managesGPUCache { Qwen35MLXChat.clearGPUCache() }
-    }
-
-    /// Which summarization backend to load: an on-device MLX LLM family, or
-    /// the OS-managed Apple Intelligence model.
-    public enum Backend: String, Sendable {
-        case qwen35, gemma4
-        case appleIntelligence = "apple"
-    }
-
-    public static func defaultModelId(for backend: Backend) -> String {
-        switch backend {
-        case .qwen35: return Qwen35MLXChat.defaultModelId
-        case .gemma4: return "aufklarer/gemma-4-E2B-it-MLX-4bit"
-        case .appleIntelligence: return "apple-intelligence"  // OS-managed; label only
-        }
-    }
-
-    /// Where the backend's weights live on disk. The app deletes exactly this
-    /// directory for "Remove Model" — it is model-specific by construction, so
-    /// ASR/diarization caches are never touched. Apple Intelligence weights
-    /// are the OS's; there is nothing here the app could delete.
-    public static func modelCacheDirectory(for backend: Backend) throws -> URL {
-        guard backend != .appleIntelligence else { throw SummaryBackendError.noModelDirectory }
-        return try HuggingFaceDownloader.getCacheDirectory(for: defaultModelId(for: backend))
-    }
-
-    /// Whether the backend is ready to load without a download — weights on
-    /// disk for the MLX backends, OS availability for Apple Intelligence.
-    public static func isModelDownloaded(_ backend: Backend) -> Bool {
-        switch backend {
-        case .appleIntelligence:
-            return AppleIntelligence.status == .available
-        case .qwen35:
-            // Qwen weights live in a quantization subdirectory (int4/).
-            guard let dir = try? modelCacheDirectory(for: backend) else { return false }
-            return HuggingFaceDownloader.weightsExist(in: dir.appendingPathComponent("int4"))
-        case .gemma4:
-            guard let dir = try? modelCacheDirectory(for: backend) else { return false }
-            return HuggingFaceDownloader.weightsExist(in: dir)
-        }
+    /// Cache directories of the retired MLX summarizer models (Qwen3.5
+    /// through build 9, Gemma 4 through 2026-07) — dead space on devices
+    /// that ran those builds, deleted by the app's one-time cleanup.
+    public static func legacyModelCacheDirectories() -> [URL] {
+        ["aufklarer/Qwen3.5-0.8B-Chat-MLX", "aufklarer/gemma-4-E2B-it-MLX-4bit"]
+            .compactMap { try? HuggingFaceDownloader.getCacheDirectory(for: $0) }
     }
 
     /// Per-pass transcript budget for the Apple Intelligence backend, from
@@ -138,50 +122,27 @@ public final class MeetingSummarizer {
         max(4_000, Int(Double(contextTokens - 1_300) * 3.5))
     }
 
+    /// Attach to the Apple Intelligence system model. Throws
+    /// `SummaryBackendError.unavailable` with the reason (old OS, ineligible
+    /// hardware, feature off, model still downloading) when it can't run.
     public static func load(
-        backend: Backend = .qwen35,
-        modelId: String? = nil,
-        cacheDir: URL? = nil,
-        offlineMode: Bool = false,
         transcriptCharBudget: Int? = nil,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingSummarizer {
-        let chat: any SummaryChat
-        let defaultBudget: Int
-        switch backend {
-        case .qwen35:
-            chat = try await Qwen35MLXChat.fromPretrained(
-                modelId: modelId ?? Self.defaultModelId(for: .qwen35),
-                cacheDir: cacheDir,
-                offlineMode: offlineMode,
-                progressHandler: progress
-            )
-            defaultBudget = 20_000
-        case .gemma4:
-            chat = try await Gemma4Chat.fromPretrained(
-                modelId: modelId ?? Self.defaultModelId(for: .gemma4),
-                cacheDir: cacheDir,
-                offlineMode: offlineMode,
-                progressHandler: progress
-            )
-            defaultBudget = 20_000
-        case .appleIntelligence:
-            #if canImport(FoundationModels)
-            guard #available(iOS 26.0, macOS 26.0, *) else {
-                throw SummaryBackendError.unavailable(.osTooOld)
-            }
-            progress?(0.5, "Checking Apple Intelligence")
-            let apple = try AppleIntelligenceChat()
-            progress?(1.0, "Ready")
-            chat = apple
-            defaultBudget = appleTranscriptCharBudget(contextTokens: apple.contextTokens)
-            #else
+        #if canImport(FoundationModels)
+        guard #available(iOS 26.0, macOS 26.0, *) else {
             throw SummaryBackendError.unavailable(.osTooOld)
-            #endif
         }
+        progress?(0.5, "Checking Apple Intelligence")
+        let apple = try AppleIntelligenceChat()
+        progress?(1.0, "Ready")
         return MeetingSummarizer(
-            chat: chat, transcriptCharBudget: transcriptCharBudget ?? defaultBudget,
-            managesGPUCache: backend != .appleIntelligence)
+            chat: apple,
+            transcriptCharBudget: transcriptCharBudget
+                ?? appleTranscriptCharBudget(contextTokens: apple.contextTokens))
+        #else
+        throw SummaryBackendError.unavailable(.osTooOld)
+        #endif
     }
 
     /// Produce a headline + markdown overview. The caller stamps `generatedAt`.
@@ -197,7 +158,6 @@ public final class MeetingSummarizer {
         // content. Decided in code, not prompt.
         if Self.isEmpty(transcript) { return Self.emptyResult }
         if Self.isTooThin(transcript) { return Self.thinResult }
-        defer { drainGPUCache() }
         if Self.turnLines(transcript.turns).count > transcriptCharBudget {
             return try await summarizeInSections(transcript, context: context)
         }
@@ -315,20 +275,31 @@ public final class MeetingSummarizer {
         func section(_ title: String, _ items: [String]) -> String {
             // The model sometimes fills ["None recorded"] instead of an empty
             // array — normalize either to the inline form, never a bullet.
-            let real = items.filter {
-                let t = $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Items also arrive with their own "- " prefixes; strip them
+            // before adding ours or the summary reads "- - item".
+            let real = items.map {
+                String(stripBulletMarkers(
+                    Substring($0.trimmingCharacters(in: .whitespacesAndNewlines))).rest)
+            }.filter {
+                let t = $0.lowercased()
                 return !t.isEmpty && t != "none" && t != "none recorded" && t != "none recorded."
             }
+            // The "—" separates a title from same-line content; a header
+            // above bullet lines takes no dangling dash.
             return real.isEmpty
                 ? "**\(title)** — None recorded"
-                : "**\(title)** —\n" + real.map { "- \($0)" }.joined(separator: "\n")
+                : "**\(title)**\n" + real.map { "- \($0)" }.joined(separator: "\n")
         }
-        return """
-        **Overview** — \(overview)
+        let prose = String(stripBulletMarkers(
+            Substring(overview.trimmingCharacters(in: .whitespacesAndNewlines))).rest)
+        // normalizeBullets last: items may still carry *inline* bullet runs
+        // ("**Topic** - - sub - - sub") that the per-item strip can't reach.
+        return normalizeBullets("""
+        **Overview** — \(prose)
         \(section("Key topics", keyTopics))
         \(section("Decisions", decisions))
         \(section("Action items", actionItems))
-        """
+        """)
     }
 
     /// Second pass: rewrite the first-pass headline into the terse
@@ -336,7 +307,6 @@ public final class MeetingSummarizer {
     /// follows one focused rewrite instruction far better than a format clause
     /// buried in the main summarization prompt.
     nonisolated(nonsending) public func refineLabel(headline: String, overview: String) async throws -> String {
-        defer { drainGPUCache() }
         var sampling = ChatSamplingConfig.default
         sampling.temperature = 0.0
         // Generous budget: the pipeline may spend tokens on a stripped
@@ -433,11 +403,17 @@ public final class MeetingSummarizer {
     HEADLINE: <the gist as a glanceable notification-style line — a few topic \
     words, under 50 characters, no full sentences and no people's names>
     SUMMARY:
-    <markdown with these bolded sections, using "- " bullets, no # headings>
-    **Overview** — 2-3 sentences.
-    **Key topics** — bullets.
-    **Decisions** — bullets, or "None recorded".
-    **Action items** — bullets with owner names, or "None recorded".
+    <these four bolded section headers, each on its own line, in this order — \
+    then under each header its "- " bullets, one bullet per line, at most 8 \
+    per section; a bullet never starts mid-line, no # headings, no nesting>
+    **Overview** — 2-3 sentences on this same line.
+    **Key topics**
+    - first topic
+    - second topic
+    **Decisions**
+    - a decision made in the meeting, or "**Decisions** — None recorded"
+    **Action items**
+    - an action item with its owner's name, or "**Action items** — None recorded"
     """
 
     static func userPrompt(
@@ -526,6 +502,119 @@ public final class MeetingSummarizer {
             .joined(separator: "\n")
     }
 
+    /// Consume every leading list marker ("- ", "• ", "* ") from a line.
+    /// Bold ("**word**") is safe: "* " requires the space. Returns whether any
+    /// marker was found so callers can tell bullets from prose.
+    static func stripBulletMarkers(_ text: Substring) -> (isBullet: Bool, rest: Substring) {
+        var rest = text
+        var found = false
+        while rest.hasPrefix("- ") || rest.hasPrefix("• ") || rest.hasPrefix("* ") {
+            found = true
+            rest = rest.dropFirst(2).drop(while: { $0 == " " })
+        }
+        return (found, rest)
+    }
+
+    /// Normalize model list formatting, preserving indentation: collapse
+    /// stacked leading markers ("- - item" → "- item") and split inline
+    /// bullet runs onto their own lines. The model imitates the prompt's
+    /// one-line-per-section format template literally, producing
+    /// "**Key topics** — - **Topic** - - sub - - sub" as a single line —
+    /// debullet() covers the notes fed *into* the merge, this covers what
+    /// comes back out. Idempotent, so it is safe on already-clean markdown.
+    public static func normalizeBullets(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .flatMap(normalizeLine)
+            .joined(separator: "\n")
+    }
+
+    /// One raw line → one or more normalized lines (see normalizeBullets).
+    private static func normalizeLine(_ line: Substring) -> [String] {
+        let indent = line.prefix(while: { $0 == " " })
+        let (isBullet, rest) = stripBulletMarkers(line.drop(while: { $0 == " " }))
+        let baseLevel = min(indent.count / 2, 2)
+
+        // Split on spaced markers; " - - sub" yields a segment starting
+        // "- ", which marks one nesting level deeper.
+        let segments = String(rest)
+            .replacingOccurrences(of: " • ", with: " - ")
+            .components(separatedBy: " - ")
+        let first = dropDanglingMarker(segments[0])
+        // Safety: prose with spaced hyphens ("3 - 5 people") is not a list.
+        // Only bullet lines and section headers — "**Title** —" or a bare
+        // bold "**Title**" — carry runs.
+        let endsWithDash = first.hasSuffix("—")
+        let isHeader = endsWithDash
+            || (first.hasPrefix("**") && first.hasSuffix("**") && first.count > 4)
+        guard segments.count > 1, isBullet || isHeader else {
+            let text = dropDanglingMarker(String(rest))
+            if text.isEmpty { return [] }
+            return isBullet ? [indent + "- " + text] : [String(line)]
+        }
+
+        var items: [(level: Int, text: String)] = []
+        for segment in segments.dropFirst() {
+            var (depth, text) = (0, Substring(segment))
+            while text.hasPrefix("- ") || text.hasPrefix("• ") {
+                depth += 1
+                text = text.dropFirst(2).drop(while: { $0 == " " })
+            }
+            let cleaned = dropDanglingMarker(String(text))
+            guard !cleaned.isEmpty else { continue }
+            items.append((min(baseLevel + depth, 2), cleaned))
+        }
+
+        // A dashed header followed by exactly one same-level segment is a
+        // stray marker, not a list: "**Overview** — - prose" rejoins as prose.
+        if endsWithDash, !isBullet, items.count == 1, items[0].level == 0 {
+            return [String(indent) + first + " " + items[0].text]
+        }
+        // A header's separator dash is vestigial once its bullets move to
+        // their own lines below.
+        let header = endsWithDash
+            ? dropDanglingMarker(String(first.dropLast())) : first
+        var out = [String(indent) + (isBullet ? "- " + first : header)]
+        for item in items {
+            out.append(String(repeating: "  ", count: item.level) + "- " + item.text)
+        }
+        return out
+    }
+
+    /// Trim a trailing orphaned marker ("…a Mac client. -") and whitespace.
+    private static func dropDanglingMarker(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespaces)
+        while t.hasSuffix(" -") || t.hasSuffix(" •") || t == "-" || t == "•" {
+            t = String(t.dropLast(t.count == 1 ? 1 : 2))
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return t
+    }
+
+    /// The overview split into renderable blocks. SwiftUI's Text markdown is
+    /// inline-only — newlines collapse to spaces and "- " markers render as
+    /// literal text — so the app lays out paragraphs and bullet rows itself
+    /// and applies inline markdown (bold) within each block. Normalizes
+    /// first, so summaries stored before normalization existed render
+    /// correctly too.
+    public static func overviewBlocks(_ overview: String) -> [SummaryOverviewBlock] {
+        normalizeBullets(overview)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .compactMap { raw in
+                let indent = raw.prefix(while: { $0 == " " || $0 == "\t" }).count
+                let (isBullet, rest) = stripBulletMarkers(
+                    raw.drop(while: { $0 == " " || $0 == "\t" }))
+                var text = rest.trimmingCharacters(in: .whitespaces)
+                guard !text.isEmpty else { return nil }
+                if isBullet { return .bullet(level: min(indent / 2, 2), text: text) }
+                // A section header's separator dash is vestigial once its
+                // content lives on the lines below.
+                while text.hasSuffix("—") || text.hasSuffix("–") {
+                    text = String(text.dropLast()).trimmingCharacters(in: .whitespaces)
+                }
+                return text.isEmpty ? nil : .paragraph(text)
+            }
+    }
+
     static let sectionNotesSystemPrompt = """
     You take notes on one section of a workplace 1-on-1 meeting transcript. \
     Work only from the transcript section: be factual and specific, use only \
@@ -559,6 +648,11 @@ public final class MeetingSummarizer {
             + notes.enumerated()
                 .map { "Section \($0.offset + 1) notes:\n\($0.element)" }
                 .joined(separator: "\n\n")
+            // Recency: after pages of flat "- " notes, the small model
+            // continues the note style and drops the section headers unless
+            // the format is restated here at the end.
+            + "\n\nRespond in the HEADLINE/SUMMARY format from your "
+            + "instructions, keeping all four bolded section headers."
     }
 
     /// Keep prompts within a sane prefill budget on phone hardware: very long
@@ -601,6 +695,6 @@ public final class MeetingSummarizer {
             headline = String(headline.prefix(47)) + "…"
         }
         if overview.isEmpty { overview = trimmed }
-        return (headline, overview)
+        return (headline, normalizeBullets(overview))
     }
 }
