@@ -150,7 +150,7 @@ struct MyVoiceView: View {
                 } header: {
                     Text("Transcription")
                 } footer: {
-                    Text("Automatic uses Apple's on-device speech model on this iPhone and falls back to Luxicon's built-in engine if it isn't available. Everything stays on the device either way.")
+                    Text("Automatic uses Apple's on-device speech model on this iPhone. If the Apple engine can't start, transcription falls back to Luxicon's built-in engine. Everything stays on the device either way.")
                 }
             }
 
