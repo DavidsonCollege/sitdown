@@ -141,6 +141,22 @@ struct MyVoiceView: View {
                 onSync: { Task { await store.syncPeople() } }
             )
 
+            if #available(iOS 26.0, *) {
+                @Bindable var store = store
+                Section {
+                    Picker("Engine", selection: $store.asrEngineChoice) {
+                        Text("Automatic (recommended)").tag(ASREngine?.none)
+                        Text("Apple").tag(ASREngine?.some(.appleSpeech))
+                        Text("Luxicon").tag(ASREngine?.some(.parakeet))
+                    }
+                    .onChange(of: store.asrEngineChoice) { store.save() }
+                } header: {
+                    Text("Transcription")
+                } footer: {
+                    Text("Automatic uses Apple's on-device speech model on this iPhone and falls back to Luxicon's built-in engine if it isn't available. Everything stays on the device either way.")
+                }
+            }
+
             Section {
                 ShareLink(item: URL(string: "https://github.com/DavidsonCollege/luxicon/releases")!) {
                     Label("Send installer link to your Mac", systemImage: "square.and.arrow.up")

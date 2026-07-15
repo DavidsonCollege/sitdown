@@ -153,6 +153,9 @@ asks first.
   restored phone keeps your library.
 - Out of the box, the only network traffic is the model download from
   Hugging Face (no user data attached).
+- On iOS 26 and later, transcription can use Apple's built-in speech model — a
+  system component that Apple's OS downloads and runs on-device, the same way
+  keyboard dictation works; audio still never leaves the phone.
 - Opt-in features create additional traffic, all under your control:
   - **Mac sync** — when you pair a Mac, transcripts and summaries you push
     (or all new ones, if you enable auto-push) travel over your local network

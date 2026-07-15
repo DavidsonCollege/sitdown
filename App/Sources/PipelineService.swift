@@ -24,7 +24,16 @@ actor PipelineService {
         isLoading = true
         defer { isLoading = false }
         pipeline = nil  // release the old engine's memory before loading anew
-        let loaded = try await MeetingPipeline.load(engine: engine, progress: progress)
+        let loaded: MeetingPipeline
+        do {
+            loaded = try await MeetingPipeline.load(engine: engine, progress: progress)
+        } catch where engine == .appleSpeech {
+            // System transcriber unavailable (locale/asset) — never block a
+            // meeting on it. Cache under the requested key so we don't retry
+            // (and re-fail) the download every session this run.
+            progress?(0, "System transcription unavailable — using built-in engine")
+            loaded = try await MeetingPipeline.load(engine: .parakeet, progress: progress)
+        }
         pipeline = loaded
         loadedEngine = engine
         return loaded
