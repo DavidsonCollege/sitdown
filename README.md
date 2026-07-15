@@ -34,9 +34,11 @@ All inference runs on the Apple Neural Engine / GPU via
 - **Speaker ID** — WeSpeaker enrollment matching (cosine similarity)
 
 Models download from Hugging Face on first use and are cached on-device:
-~700 MB for transcription + diarization, ~400 MB more for on-device
-summaries, plus a small live-caption model (~1.2 GB total if you use
-everything).
+~700 MB for transcription + diarization, plus a small live-caption model.
+Summaries use the Apple Intelligence system model — OS-managed, no
+download — and require an iPhone 15 Pro or later on iOS 26 or later; on
+other devices, export the transcript and summarize it with any AI
+assistant.
 
 Measured June 2026 on an M-series Mac (release build): a 50-second
 two-speaker meeting diarizes, transcribes, and speaker-matches in 4.6 s
@@ -51,7 +53,7 @@ Sources/LuxiconKit/     Core pipeline (platform-neutral Swift package)
   MeetingPipeline.swift   diarize → per-turn ASR → speaker naming
   Models.swift            transcript, turns, stats, enrollment types
   Export.swift            markdown + JSON export
-  MeetingSummarizer.swift on-device LLM summaries (Qwen3.5, MLX)
+  MeetingSummarizer.swift Apple Intelligence summaries (FoundationModels)
   Vocabulary*.swift       user glossary + ASR correction pass
   LuxiconSync.swift       LAN sync protocol (TLS-PSK) + SyncPusher.swift
 Sources/LuxiconCLI/     macOS command-line harness
@@ -151,8 +153,12 @@ asks first.
   container on-device. They are included in your normal iPhone backup
   (encrypted by Apple; end-to-end if you use Advanced Data Protection) — so a
   restored phone keeps your library.
-- Out of the box, the only network traffic is the model download from
-  Hugging Face (no user data attached).
+- Out of the box, the only network traffic is the model downloads — the
+  transcription models from Hugging Face, and on iOS 26 the system speech
+  model from Apple (no user data attached).
+- On iOS 26 and later, transcription can use Apple's built-in speech model — a
+  system component that Apple's OS downloads and runs on-device, the same way
+  keyboard dictation works; audio still never leaves the phone.
 - Opt-in features create additional traffic, all under your control:
   - **Mac sync** — when you pair a Mac, transcripts and summaries you push
     (or all new ones, if you enable auto-push) travel over your local network

@@ -1,5 +1,4 @@
 import Foundation
-import Qwen3Chat
 
 /// Why Apple Intelligence can (or can't) run on this device — in terms the
 /// UI can turn into user-actionable copy. Availability-neutral so views and
@@ -116,13 +115,18 @@ public final class AppleIntelligenceChat: SummaryChat {
             + "names, no full sentences")
         var headline: String
         @Guide(description: "Two to three sentences on what was discussed, "
-            + "using only what was actually said in the transcript")
+            + "using only what was actually said in the transcript; plain "
+            + "prose with no list markers")
         var overview: String
-        @Guide(description: "Short phrases for the topics actually discussed")
+        @Guide(description: "Short phrases for the topics actually discussed; "
+            + "one topic per array element, plain text without \"-\" or "
+            + "bullet markers")
         var keyTopics: [String]
-        @Guide(description: "Decisions actually made in the conversation; empty if none")
+        @Guide(description: "Decisions actually made in the conversation, one "
+            + "per array element without list markers; empty if none")
         var decisions: [String]
-        @Guide(description: "Action items with the owner's name; empty if none")
+        @Guide(description: "Action items with the owner's name, one per "
+            + "array element without list markers; empty if none")
         var actionItems: [String]
     }
 

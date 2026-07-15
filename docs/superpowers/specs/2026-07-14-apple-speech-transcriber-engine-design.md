@@ -33,12 +33,13 @@ slicing transcribes each speaker's overlap region from that speaker's own audio.
 
 `@available(iOS 26, macOS 26, *) public final class AppleSpeechTranscriber: TurnTranscriber`
 
-- **`supportsContext = true`.** The vocabulary context string is supplied to the
-  analyzer via `AnalysisContext.contextualStrings` (as individual terms, not the
-  joined prose string — `VocabularyCorrector` gains a
-  `contextTerms(for:) -> [String]` alongside `contextString(for:)` if needed).
-  Post-ASR near-miss correction in `MeetingPipeline.process` still runs, as it
-  does for every engine.
+- **`supportsContext = true`.** Vocabulary is supplied to the analyzer via
+  `AnalysisContext.contextualStrings` as individual terms. The `TurnTranscriber`
+  context parameter changes from prose `String?` to `[String]?` (terms):
+  the only prose consumer was Qwen3-ASR, retired on main 2026-07-14
+  (`2552916`), so `VocabularyCorrector.contextTerms(for:) -> [String]`
+  **replaces** `contextString(for:)`. Post-ASR near-miss correction in
+  `MeetingPipeline.process` still runs, as it does for every engine.
 - **`transcribeTurn(_:sampleRate:context:)`** bridges sync→async with a
   semaphore: convert `[Float]` @ 16 kHz to an `AVAudioPCMBuffer` (in the format
   from `SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith:)`), wrap in
@@ -59,29 +60,44 @@ slicing transcribes each speaker's overlap region from that speaker's own audio.
   `(Double, String)` handler the other engines use), and throws
   `AppleSpeechError.unavailable(reason:)` if the OS, locale, or asset can't
   satisfy the request.
-- **`static var isSupported: Bool`** — cheap runtime gate (OS version + locale
-  in `supportedLocales`) usable from the app without loading anything.
+- **Support gating is two-stage:** the cheap sync gate is the OS version alone
+  (`#available`, via `ASREngine.resolvedDefault()`), because the locale check
+  (`supportedLocale(equivalentTo:)`) is async. Locale and asset failures
+  surface as thrown errors at load time and are handled by the app-level
+  fallback.
 
 ### `ASREngine` (existing, `MeetingPipeline.swift`)
 
-New case `appleSpeech`. `MeetingPipeline.load(engine:)` gains the branch; on
-`AppleSpeechError` it **falls back to `.parakeet`** rather than failing the
-meeting — processing must never be blocked by the new path. The pipeline
-resolution reports which engine actually loaded so the UI can show it.
+New case `appleSpeech`. `MeetingPipeline.load(engine:)` gains the branch and
+**throws** on failure (an explicit request for an unavailable engine is an
+error — this keeps the CLI strict). The **fallback to `.parakeet` lives in the
+app's `PipelineService.ensureLoaded`**, so processing is never blocked by the
+new path; it emits a progress-stage message naming the fallback.
 
-A static helper `ASREngine.resolvedDefault` returns `.appleSpeech` when
-`AppleSpeechTranscriber.isSupported`, else `.parakeet`.
+A static helper `ASREngine.resolvedDefault()` returns `.appleSpeech` when the
+OS supports it (`#available` gate only — see above), else `.parakeet`.
 
 ### App (`App/Sources/`)
 
-- `Store.asrEngine`'s property initializer and `load()`'s decode fallback both
-  change from `.parakeet` to `ASREngine.resolvedDefault`, so new installs (and
-  pre-field stores) default to Apple on supported devices. **Limitation:** the
-  app persists `asrEngine` unconditionally on every save, so existing installs
-  all have `"parakeet"` on disk regardless of whether the user ever touched the
-  picker — a persisted value is indistinguishable from an explicit choice and is
-  preserved. Existing users get the new engine by selecting it in settings; we
-  do not migrate them automatically.
+- **Updated during planning (main moved):** the experimental Qwen3 engine, its
+  settings picker, and the `qwen3` enum case were retired on main 2026-07-14
+  (`2552916`), which also gave `ASREngine` a tolerant decoder (unknown raw
+  values decode to `.parakeet` instead of failing the whole store). Any
+  previously persisted engine value therefore now reads as `.parakeet`, and no
+  explicit-choice history survives — existing users can be auto-upgraded
+  safely via the new choice key below.
+- `Store` replaces the stored `asrEngine` with `asrEngineChoice: ASREngine?`
+  where `nil` means *automatic* (resolve via `ASREngine.resolvedDefault()` at
+  use time) and non-nil is an explicit user choice from the new picker. A
+  computed `asrEngine` keeps call sites (`SessionProcessing`) unchanged.
+- Persistence: new optional key `asrEngineChoice` in `Persisted`; the legacy
+  `asrEngine` key is ignored on read (post-retirement it can only decode to
+  `.parakeet`) and no longer written. Older builds ignore the unknown
+  `asrEngineChoice` key and see a missing `asrEngine` key, decoding to
+  `.parakeet` — downgrades are safe even when the choice is `appleSpeech`, and
+  the tolerant `ASREngine` decoder adds a second layer of safety.
+- A new "Transcription" section in the settings screen (`MyVoiceView`), shown
+  only on iOS 26+, offers Automatic (recommended) / Apple / Luxicon (Parakeet).
 - The engine picker in settings shows "Apple (system)" only when
   `AppleSpeechTranscriber.isSupported`.
 - `PipelineService` passes the engine through unchanged; if the pipeline fell
@@ -111,12 +127,12 @@ out-of-process engine) → vocabulary near-miss correction → enrollment naming
 
 ## Persistence back-compat
 
-`Persisted.asrEngine` is already `ASREngine?` with a `?? .parakeet` fallback, so
-current builds are unaffected. A store.json containing `"appleSpeech"` decoded
-by an *older* build would throw during `Persisted` decode and trip the
-corrupt-store set-aside path. This is the same exposure `SummaryEngine` cases
-already have, downgrade installs are not a supported path, and the set-aside is
-non-destructive — accepted, not mitigated, in v1.
+The engine choice moves to a *new* optional key (`asrEngineChoice`), and the
+legacy `asrEngine` key is no longer written. Older builds ignore unknown keys
+and decode a missing `asrEngine` as `.parakeet`, so a store.json written by the
+new build — including one with `"appleSpeech"` selected — decodes cleanly on
+older builds. This is strictly safer than reusing the legacy key, whose decoder
+would throw on an unknown raw value and trip the corrupt-store set-aside path.
 
 ## Testing & verification
 
@@ -134,7 +150,8 @@ non-destructive — accepted, not mitigated, in v1.
 - Live captions via SpeechAnalyzer volatile results (follow-up spec; keeps
   Parakeet streaming for now).
 - Whole-file transcription with timestamp alignment.
-- Removing Parakeet/Qwen3 — they remain for iOS 18–25 devices and as fallback.
+- Removing Parakeet — it remains for iOS 18–25 devices and as fallback.
+  (Qwen3 was retired separately on main, 2026-07-14.)
 - DictationTranscriber, SpeechDetector, or custom language models
   (`SFCustomLanguageModelData`).
 

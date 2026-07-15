@@ -11,7 +11,7 @@ actor PipelineService {
     private var isLoading = false
 
     func ensureLoaded(
-        engine: ASREngine = .parakeet,
+        engine: ASREngine,
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> MeetingPipeline {
         // Actor reentrancy: a second caller arriving mid-load would also see
@@ -24,7 +24,19 @@ actor PipelineService {
         isLoading = true
         defer { isLoading = false }
         pipeline = nil  // release the old engine's memory before loading anew
-        let loaded = try await MeetingPipeline.load(engine: engine, progress: progress)
+        let loaded: MeetingPipeline
+        do {
+            loaded = try await MeetingPipeline.load(engine: engine, progress: progress)
+        } catch where engine == .appleSpeech && !(error is CancellationError) && !Task.isCancelled {
+            // System transcriber unavailable (locale/asset) — never block a
+            // meeting on it. Cache under the requested key so we don't retry
+            // (and re-fail) the download every session this run. Cancellation
+            // propagates instead of triggering fallback — the caller is going
+            // away, not failing, and we must not silently downgrade the
+            // cached engine for the rest of the app run.
+            progress?(0, "System transcription unavailable — using built-in engine")
+            loaded = try await MeetingPipeline.load(engine: .parakeet, progress: progress)
+        }
         pipeline = loaded
         loadedEngine = engine
         return loaded
@@ -51,9 +63,11 @@ actor PipelineService {
         }
     }
 
-    /// Extract a voice embedding from an enrollment recording.
+    /// Extract a voice embedding from an enrollment recording. Embedding only
+    /// uses the diarizer, so any loaded pipeline serves; avoid dumping a
+    /// loaded pipeline just to satisfy an engine default.
     func embedVoice(audio: [Float]) async throws -> [Float] {
-        let pipeline = try await ensureLoaded()
+        let pipeline = try await ensureLoaded(engine: loadedEngine ?? .resolvedDefault())
         return pipeline.embedVoice(audio: audio)
     }
 }

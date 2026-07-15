@@ -12,32 +12,22 @@ struct Person: Codable, Identifiable, Hashable {
     var context: String?
 }
 
-/// Which engine generates AI summaries. Chosen when enabling the feature,
-/// switchable afterwards in My Voice.
+/// Which engine generates AI summaries. Apple Intelligence only since
+/// 2026-07 — the in-process MLX era (Qwen3.5, Gemma 4) ended with the
+/// per-process memory ceiling. The enum survives because store.json
+/// persists it, and it is the seam a future engine would plug back into.
 enum SummaryEngine: String, Codable {
-    case appleIntelligence, gemma
+    case appleIntelligence
 
-    /// Engine used when the user hasn't picked one: Apple Intelligence when
-    /// the OS offers it — it runs out-of-process, so none of the MLX memory
-    /// cost lands on the app — otherwise Gemma (pre-A17 Pro devices, older
-    /// OS, or Apple Intelligence turned off in Settings).
-    static var systemDefault: SummaryEngine {
-        AppleIntelligence.status == .available ? .appleIntelligence : .gemma
+    /// Tolerant decode: a retired engine persisted by an older build
+    /// ("gemma") maps to Apple Intelligence instead of failing the entire
+    /// store.json decode and taking the user's library with it.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = SummaryEngine(rawValue: raw) ?? .appleIntelligence
     }
 
-    var backend: MeetingSummarizer.Backend {
-        switch self {
-        case .appleIntelligence: return .appleIntelligence
-        case .gemma: return .gemma4
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .appleIntelligence: return "Apple Intelligence"
-        case .gemma: return "Gemma 4"
-        }
-    }
+    var displayName: String { "Apple Intelligence" }
 }
 
 /// One recorded 1-on-1.
@@ -88,15 +78,18 @@ final class Store {
     var myVoiceEmbedding: [Float]?
     /// User-defined terms (jargon, project names) to ground transcription in.
     var vocabularyEntries: [VocabularyEntry] = []
-    /// Which ASR engine transcribes turns.
-    var asrEngine: ASREngine = .parakeet
+    /// Explicit engine choice from settings; nil means automatic
+    /// (Apple's system transcriber on iOS 26+, else Parakeet).
+    var asrEngineChoice: ASREngine?
+    var asrEngine: ASREngine { asrEngineChoice ?? .resolvedDefault() }
     /// Master switch for the AI features (summaries, list labels, personal
     /// context). Off by default: enabling requires an explicit opt-in that
     /// downloads the ~2.5 GB on-device model. When off, the summary and
     /// context UI is hidden entirely.
     var aiSummariesEnabled = false
-    /// Engine behind the summaries; nil until the user enables the feature
-    /// and picks one. Existing enabled users migrate to .gemma in `load()`.
+    /// Engine behind the summaries; nil until the user enables the feature.
+    /// Always .appleIntelligence today (retired engines decode to it), kept
+    /// as persisted state so a future engine can slot back in.
     var summaryEngine: SummaryEngine?
     /// Generate a summary automatically after each transcription (only
     /// meaningful while `aiSummariesEnabled`).
@@ -155,7 +148,11 @@ final class Store {
         /// Pre-0.1.0(4) plain-string vocabulary; migrated to `vocabularyEntries`.
         var customVocabulary: [String]?
         var vocabularyEntries: [VocabularyEntry]?
+        /// Legacy engine field: ignored on read, never written. Post-Qwen3
+        /// retirement it can only decode to .parakeet, and a default was
+        /// never distinguishable from a choice under this key anyway.
         var asrEngine: ASREngine?
+        var asrEngineChoice: ASREngine?
         var vocabularySourceURL: String?
         var vocabularyHeaders: [HTTPHeader]?
         var vocabularyLastSync: Date?
@@ -238,16 +235,18 @@ final class Store {
         myVoiceEmbedding = persisted.myVoiceEmbedding
         vocabularyEntries = persisted.vocabularyEntries
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
-        asrEngine = persisted.asrEngine ?? .parakeet
+        asrEngineChoice = persisted.asrEngineChoice
         vocabularySourceURL = persisted.vocabularySourceURL ?? ""
         vocabularyLastSync = persisted.vocabularyLastSync
         // Existing users (builds 1-9) had always-on summarization via the old
         // 0.8B model; the feature is now an explicit opt-in with a larger
         // model, so it starts off for everyone. Old summaries stay readable.
         aiSummariesEnabled = persisted.aiSummariesEnabled ?? false
-        // Engine choice postdates the feature: users who enabled summaries
-        // before it existed were running Gemma and keep exactly that.
-        summaryEngine = persisted.summaryEngine ?? (aiSummariesEnabled ? .gemma : nil)
+        // Apple Intelligence is the only engine; a stored retired engine
+        // ("gemma") already decoded to it, and enabled-without-choice
+        // (pre-engine-picker builds) resolves to it here. The next summary
+        // surfaces an availability error if this device can't run it.
+        summaryEngine = persisted.summaryEngine ?? (aiSummariesEnabled ? .appleIntelligence : nil)
         autoSummarize = persisted.autoSummarize ?? true
         syncHost = persisted.syncHost ?? ""
         autoPushToMac = persisted.autoPushToMac ?? false
@@ -280,7 +279,8 @@ final class Store {
             myContext: myContext.isEmpty ? nil : myContext,
             myVoiceEmbedding: myVoiceEmbedding,
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
-            asrEngine: asrEngine,
+            asrEngine: nil,                    // legacy key: read-only (see Persisted)
+            asrEngineChoice: asrEngineChoice,
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
             vocabularyHeaders: nil,  // Keychain-only since build 6
             vocabularyLastSync: vocabularyLastSync,

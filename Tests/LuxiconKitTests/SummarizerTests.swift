@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import Qwen3Chat
 @testable import LuxiconKit
 
 /// Scripted chat backend: returns canned replies, records prompts.
@@ -15,19 +14,19 @@ final class MockChat: SummaryChat {
 }
 
 @Suite struct SummarizerModelManagementTests {
-    @Test func backendsHaveDefaultModels() {
-        #expect(MeetingSummarizer.defaultModelId(for: .qwen35) == "aufklarer/Qwen3.5-0.8B-Chat-MLX")
-        #expect(MeetingSummarizer.defaultModelId(for: .gemma4) == "aufklarer/gemma-4-E2B-it-MLX-4bit")
-    }
-
-    @Test func cacheDirectoryIsPerModel() throws {
-        // The app deletes exactly this directory on "Remove Model" — it must be
-        // model-specific so ASR/diarization caches are never touched.
-        let gemma = try MeetingSummarizer.modelCacheDirectory(for: .gemma4)
-        let qwen = try MeetingSummarizer.modelCacheDirectory(for: .qwen35)
-        #expect(gemma.path.contains("gemma-4-E2B-it-MLX-4bit"))
-        #expect(qwen.path.contains("Qwen3.5-0.8B-Chat-MLX"))
-        #expect(gemma != qwen)
+    @Test func legacyCleanupTargetsOnlyRetiredSummarizerModels() {
+        // The app deletes exactly these directories in its one-time cleanup —
+        // they must be model-specific so ASR/diarization caches are never
+        // touched, and cover both retired eras (Qwen3.5, Gemma 4).
+        let dirs = MeetingSummarizer.legacyModelCacheDirectories()
+        #expect(dirs.count == 2)
+        #expect(dirs.contains { $0.path.contains("Qwen3.5-0.8B-Chat-MLX") })
+        #expect(dirs.contains { $0.path.contains("gemma-4-E2B-it-MLX-4bit") })
+        #expect(Set(dirs).count == dirs.count)
+        for dir in dirs {
+            #expect(!dir.path.contains("Parakeet") && !dir.path.contains("Pyannote")
+                    && !dir.path.contains("WeSpeaker"))
+        }
     }
 }
 
@@ -347,10 +346,12 @@ final class MockStructuredChat: SummaryChat {
             keyTopics: ["Budget", "Hiring"],
             decisions: [],
             actionItems: ["JD: post the roles"])
+        // Prose sections join title and content with an inline " — ";
+        // list sections are a bare header above bullets (no dangling dash).
         #expect(md.contains("**Overview** — We discussed the budget."))
-        #expect(md.contains("**Key topics** —\n- Budget\n- Hiring"))
+        #expect(md.contains("**Key topics**\n- Budget\n- Hiring"))
         #expect(md.contains("**Decisions** — None recorded"))
-        #expect(md.contains("**Action items** —\n- JD: post the roles"))
+        #expect(md.contains("**Action items**\n- JD: post the roles"))
     }
 
     @Test func assembleOverviewTreatsNoneRecordedItemsAsEmpty() {
@@ -441,21 +442,6 @@ final class MockStructuredChat: SummaryChat {
 }
 
 @Suite struct AppleBackendTests {
-    @Test func appleBackendParsesFromCLIRawValue() {
-        #expect(MeetingSummarizer.Backend(rawValue: "apple") == .appleIntelligence)
-        // Existing raw values must not shift under the new case.
-        #expect(MeetingSummarizer.Backend(rawValue: "qwen35") == .qwen35)
-        #expect(MeetingSummarizer.Backend(rawValue: "gemma4") == .gemma4)
-    }
-
-    @Test func appleBackendHasNoModelDirectory() {
-        // "Remove Model" deletes exactly this directory — for the OS-managed
-        // model there must be nothing the app could delete.
-        #expect(throws: SummaryBackendError.noModelDirectory) {
-            try MeetingSummarizer.modelCacheDirectory(for: .appleIntelligence)
-        }
-    }
-
     @Test func appleBudgetScalesWithContextWindow() {
         // 4,096-token window (iOS 26) → high-single-digit-thousands of chars
         // per pass; 8,192 (iOS 27) → the whole current transcript budget fits.

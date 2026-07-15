@@ -179,8 +179,7 @@ struct TranscriptView: View {
         if store.aiSummariesEnabled || session.summary != nil {
             Section("Summary") {
                 if let summary = session.summary {
-                    Text(LocalizedStringKey(summary.overview))
-                        .font(.callout)
+                    SummaryOverviewText(overview: summary.overview)
                         .padding(.vertical, 2)
                     if let summaryURL {
                         ShareLink(item: summaryURL) {
@@ -305,5 +304,32 @@ struct TranscriptView: View {
         } else {
             summaryURL = nil
         }
+    }
+}
+
+/// Block-level renderer for the stored summary markdown. SwiftUI's Text
+/// markdown is inline-only — newlines collapse to spaces and "- " markers
+/// render as literal text — so lay out paragraphs and bullet rows ourselves
+/// and keep inline markdown (bold) within each block.
+private struct SummaryOverviewText: View {
+    let overview: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(MeetingSummarizer.overviewBlocks(overview).enumerated()),
+                    id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let text):
+                    Text(LocalizedStringKey(text))
+                case .bullet(let level, let text):
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("•").foregroundStyle(.secondary)
+                        Text(LocalizedStringKey(text))
+                    }
+                    .padding(.leading, CGFloat(level + 1) * 12)
+                }
+            }
+        }
+        .font(.callout)
     }
 }

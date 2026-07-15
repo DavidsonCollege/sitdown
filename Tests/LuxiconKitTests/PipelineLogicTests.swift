@@ -161,7 +161,7 @@ import SpeechVAD
         var callSizes: [Int] = []
         var texts: [String]
         init(texts: [String] = []) { self.texts = texts }
-        func transcribeTurn(_ audio: [Float], sampleRate: Int, context: String?) -> TranscriptionResult {
+        func transcribeTurn(_ audio: [Float], sampleRate: Int, context: [String]?) -> TranscriptionResult {
             callSizes.append(audio.count)
             let text = callSizes.count <= texts.count ? texts[callSizes.count - 1] : "chunk\(callSizes.count)"
             return TranscriptionResult(text: text, confidence: 0.5)
@@ -235,5 +235,17 @@ import SpeechVAD
     @Test func missingValueStaysNil() throws {
         let w = try JSONDecoder().decode(Wrapper.self, from: Data(#"{}"#.utf8))
         #expect(w.asrEngine == nil)
+    }
+}
+
+@Suite struct ASREngineDefaultTests {
+    @Test func resolvedDefaultPrefersAppleSpeechWhenAvailable() {
+        #expect(ASREngine.resolvedDefault(appleSpeechAvailable: true) == .appleSpeech)
+        #expect(ASREngine.resolvedDefault(appleSpeechAvailable: false) == .parakeet)
+    }
+
+    @Test func appleSpeechRawValueIsStable() {
+        // Persisted in store.json and passed as a CLI flag — must never change.
+        #expect(ASREngine.appleSpeech.rawValue == "appleSpeech")
     }
 }

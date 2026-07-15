@@ -22,15 +22,15 @@ struct LuxiconCLI {
             print("""
             usage: luxicon-cli <audio-file> [options]
                    luxicon-cli push <file.json> --token <pairing token>
-                   luxicon-cli summarize <transcript.json> [--backend qwen35|gemma4|apple]
-                                         [--context "Name=text"] [--context-file "Name=path"]
+                   luxicon-cli summarize <transcript.json> [--context "Name=text"]
+                                         [--context-file "Name=path"]
                                          [--chunk-chars <n>] [--second-pass]
               --enroll Name=voice.wav   enroll a known voice (repeatable)
               --out <dir>               write transcript.md + transcript.json here
               --title <title>           meeting title (default: file name)
               --vocab "a, b, c"         names/terms to ground transcription in
               --vocab-file terms.json   vocabulary JSON ({"terms":[{"term":...,"soundsLike":[...]}]})
-              --engine parakeet         ASR engine (Parakeet TDT, CoreML)
+              --engine parakeet|appleSpeech ASR engine (Parakeet TDT or Apple SpeechTranscriber)
             """)
             return
         }
@@ -64,10 +64,7 @@ struct LuxiconCLI {
             }
             var context: [SummaryParticipant] = []
             var secondPass = false
-            var modelId: String?
-            var modelDir: String?
             var chunkChars: Int?
-            var backend: MeetingSummarizer.Backend = .qwen35
             var j = 2
             while j < args.count {
                 if args[j] == "--second-pass" { secondPass = true; j += 1; continue }
@@ -82,8 +79,6 @@ struct LuxiconCLI {
                     let (n, p) = try nameEq(args[j + 1])
                     let text = try String(contentsOf: URL(fileURLWithPath: p), encoding: .utf8)
                     context.append(SummaryParticipant(name: n, context: text))
-                case "--model": modelId = args[j + 1]
-                case "--model-dir": modelDir = args[j + 1]  // local dir with int4/ inside
                 case "--chunk-chars":
                     // Debug override of the per-pass budget, to exercise split
                     // summarization on short transcripts.
@@ -91,28 +86,18 @@ struct LuxiconCLI {
                         throw ValidationError("--chunk-chars expects a positive integer")
                     }
                     chunkChars = n
-                case "--backend":
-                    guard let b = MeetingSummarizer.Backend(rawValue: args[j + 1]) else {
-                        throw ValidationError("--backend expects qwen35, gemma4, or apple")
-                    }
-                    backend = b
                 default: throw ValidationError("unknown option \(args[j])")
                 }
                 j += 2
             }
 
-            if backend == .appleIntelligence, AppleIntelligence.status != .available {
+            guard AppleIntelligence.status == .available else {
                 throw ValidationError("Apple Intelligence is not available here "
-                    + "(\(AppleIntelligence.status)) — needs macOS 26+ with Apple Intelligence on")
+                    + "(\(AppleIntelligence.status)) — summarization needs macOS 26+ "
+                    + "with Apple Intelligence on")
             }
-            print(backend == .appleIntelligence
-                ? "Using the Apple Intelligence system model…"
-                : "Loading summarizer model (downloads on first run)…")
+            print("Using the Apple Intelligence system model…")
             let summarizer = try await MeetingSummarizer.load(
-                backend: backend,
-                modelId: modelId,
-                cacheDir: modelDir.map { URL(fileURLWithPath: $0) },
-                offlineMode: modelDir != nil,
                 transcriptCharBudget: chunkChars
             ) { p, stage in
                 print(String(format: "  [%3.0f%%] %@", p * 100, stage))
@@ -190,7 +175,7 @@ struct LuxiconCLI {
                 i += 2
             case "--engine":
                 guard let parsed = ASREngine(rawValue: try value(after: "--engine", at: i)) else {
-                    throw ValidationError("--engine expects parakeet")
+                    throw ValidationError("--engine expects parakeet or appleSpeech")
                 }
                 engine = parsed
                 i += 2

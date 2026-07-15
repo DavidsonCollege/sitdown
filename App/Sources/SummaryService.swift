@@ -1,56 +1,44 @@
 import Foundation
 import LuxiconKit
 
-/// Owns the (non-Sendable) summarization LLM and serializes summary requests.
-/// Loads lazily on first use and stays resident until the engine changes.
-/// Engines: Apple Intelligence (OS-managed, no download) or Gemma 4 E2B —
-/// the MLX backend chosen over Qwen3.5 0.8B/2B after harness A/B (grounded
-/// summaries even with participant context; see luxicon-cli summarize).
+/// Owns the (non-Sendable) summarizer and serializes summary requests.
+/// Apple Intelligence only: the system model is OS-managed and out-of-process
+/// — no download, and none of its inference memory lands on the app.
 actor SummaryService {
     static let shared = SummaryService()
 
-    /// Shown in the enable flow; the real download is whatever the repo holds.
-    static let approximateDownload = "2.5 GB"
-
     private var summarizer: MeetingSummarizer?
-    private var loadedBackend: MeetingSummarizer.Backend?
     private var isLoading = false
 
-    /// Download (if needed) and load the backend, reporting progress. Used by
-    /// the enable flow, engine switches, and lazy loading before a summary.
-    func loadModel(
-        backend: MeetingSummarizer.Backend,
-        progress: @Sendable @escaping (String) -> Void
-    ) async throws {
+    /// Attach to the system model, reporting progress. Used by the enable
+    /// flow and lazy loading before a summary; throws with the availability
+    /// reason when Apple Intelligence can't run here.
+    func loadModel(progress: @Sendable @escaping (String) -> Void) async throws {
         // Actor reentrancy: without the gate, two callers would both see nil
-        // and download/load the model twice.
+        // and attach twice.
         while isLoading {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        if loadedBackend != backend { summarizer = nil }
         if summarizer == nil {
             isLoading = true
             defer { isLoading = false }
-            summarizer = try await MeetingSummarizer.load(backend: backend) { fraction, stage in
+            summarizer = try await MeetingSummarizer.load { fraction, stage in
                 progress("\(stage) \(Int(fraction * 100))%")
             }
-            loadedBackend = backend
         }
     }
 
-    /// Drop the resident model so its cache directory can be deleted.
+    /// Drop the resident summarizer (e.g. when the feature is turned off).
     func unloadModel() {
         summarizer = nil
-        loadedBackend = nil
     }
 
     func summarize(
         _ transcript: MeetingTranscript,
         context: [SummaryParticipant],
-        backend: MeetingSummarizer.Backend,
         progress: @Sendable @escaping (String) -> Void
     ) async throws -> (listLabel: String, summary: SessionSummary) {
-        try await loadModel(backend: backend, progress: progress)
+        try await loadModel(progress: progress)
         progress("Summarizing…")
         try Task.checkCancellation()
         let result = try await summarizer!.summarize(transcript, context: context)
@@ -62,47 +50,25 @@ actor SummaryService {
 }
 
 extension Store {
-    /// Backend behind the user's engine choice. Unset (pre-engine-picker
-    /// builds) now defaults to Apple Intelligence where available — an
-    /// explicit engine choice is always honored.
-    var currentSummaryBackend: MeetingSummarizer.Backend {
-        (summaryEngine ?? .systemDefault).backend
-    }
-
-    /// Whether the current engine is ready without a download.
-    var summaryModelDownloaded: Bool {
-        MeetingSummarizer.isModelDownloaded(currentSummaryBackend)
-    }
-
-    /// Free space on the device volume, for the enable-flow disclosure.
-    static func availableDiskSpace() -> Int64? {
-        let values = try? Store.documentsURL.resourceValues(
-            forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return values?.volumeAvailableCapacityForImportantUsage
-    }
-
-    /// Opt in with the chosen engine: flip the switch and get the engine
-    /// working (Gemma downloads; Apple Intelligence just checks availability)
-    /// with visible progress. On failure the switch flips back — the feature
-    /// is never "on" without a working engine.
-    func enableAISummaries(engine: SummaryEngine) {
-        guard !aiSummariesEnabled || !summaryModelDownloaded else { return }
+    /// Opt in: flip the switch and attach to Apple Intelligence with visible
+    /// progress. On failure the switch flips back — the feature is never "on"
+    /// without a working engine.
+    func enableAISummaries() {
+        guard !aiSummariesEnabled else { return }
         aiSummariesEnabled = true
-        summaryEngine = engine
+        summaryEngine = .appleIntelligence
         summaryModelError = nil
         summaryModelDownloadStage = "Preparing…"
         save()
         Task {
             do {
-                try await SummaryService.shared.loadModel(backend: engine.backend) { stage in
+                try await SummaryService.shared.loadModel { stage in
                     Task { @MainActor in self.summaryModelDownloadStage = stage }
                 }
                 self.summaryModelDownloadStage = nil
             } catch {
                 self.summaryModelDownloadStage = nil
-                self.summaryModelError = engine == .gemma
-                    ? "Model download failed: \(error.localizedDescription)"
-                    : "Apple Intelligence could not start: \(error.localizedDescription)"
+                self.summaryModelError = "Apple Intelligence could not start: \(error.localizedDescription)"
                 self.aiSummariesEnabled = false
                 self.summaryEngine = nil
                 self.save()
@@ -110,57 +76,26 @@ extension Store {
         }
     }
 
-    /// Switch engines while enabled. Switching to Gemma may download; on
-    /// failure the previous engine is restored (same flip-back philosophy as
-    /// the enable flow). The old model is unloaded either way — the resident
-    /// LLM holds hundreds of MB of GPU memory.
-    func switchSummaryEngine(to engine: SummaryEngine) {
-        guard aiSummariesEnabled, engine != summaryEngine else { return }
-        let previous = summaryEngine
-        summaryEngine = engine
-        summaryModelError = nil
-        summaryModelDownloadStage = "Preparing…"
-        save()
-        Task {
-            do {
-                await SummaryService.shared.unloadModel()
-                try await SummaryService.shared.loadModel(backend: engine.backend) { stage in
-                    Task { @MainActor in self.summaryModelDownloadStage = stage }
-                }
-                self.summaryModelDownloadStage = nil
-            } catch {
-                self.summaryModelDownloadStage = nil
-                self.summaryModelError = "Could not switch to \(engine.displayName): \(error.localizedDescription)"
-                self.summaryEngine = previous
-                self.save()
-            }
-        }
-    }
-
-    /// Opt out. `deleteModel` also removes the Gemma weights from disk to
-    /// reclaim the space (Apple Intelligence has nothing the app could
-    /// delete); existing summaries on sessions are kept and stay readable.
-    func disableAISummaries(deleteModel: Bool) {
+    /// Opt out. Nothing to delete — the system model is the OS's; existing
+    /// summaries on sessions are kept and stay readable.
+    func disableAISummaries() {
         aiSummariesEnabled = false
         summaryEngine = nil
         summaryModelDownloadStage = nil
         summaryModelError = nil
         save()
-        Task {
-            await SummaryService.shared.unloadModel()
-            if deleteModel, let dir = try? MeetingSummarizer.modelCacheDirectory(for: .gemma4) {
-                try? FileManager.default.removeItem(at: dir)
-            }
-        }
+        Task { await SummaryService.shared.unloadModel() }
     }
 
-    /// One-time cleanup: builds 1-9 used the Qwen3.5-0.8B model; those weights
-    /// are dead space now that the app is Gemma-only. Deletes only that model's
-    /// directory — ASR/diarization caches are untouched.
+    /// One-time cleanup: earlier builds downloaded in-process summarizer
+    /// weights (Qwen3.5 through build 9, Gemma 4 through 2026-07 — up to
+    /// ~2.5 GB). Dead space now that summaries use the system model; deletes
+    /// only those models' directories — ASR/diarization caches are untouched.
     func removeLegacySummaryModel() {
-        guard let dir = try? MeetingSummarizer.modelCacheDirectory(for: .qwen35),
-              FileManager.default.fileExists(atPath: dir.path) else { return }
-        try? FileManager.default.removeItem(at: dir)
+        for dir in MeetingSummarizer.legacyModelCacheDirectories()
+        where FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.removeItem(at: dir)
+        }
     }
 
     /// Generate (or regenerate) the summary for a transcribed session.
@@ -175,19 +110,17 @@ extension Store {
         processing.summarizeError[sessionId] = nil
 
         // Participant context adds nuance the transcript alone can't carry
-        // (roles, running themes). Safe with the Gemma backend: harness A/B
-        // showed it stays grounded with context, where the old 0.8B model
-        // confabulated summaries out of it.
+        // (roles, running themes). Guided generation keeps the system model
+        // grounded: the reference block is fenced as interpretation-only.
         var context = [SummaryParticipant(name: myName, context: myContext)]
         if let person = person(id: session.personId) {
             context.append(SummaryParticipant(name: person.name, context: person.context ?? ""))
         }
 
-        let backend = currentSummaryBackend
         let task = Task {
             do {
                 let result = try await SummaryService.shared.summarize(
-                    transcript, context: context, backend: backend
+                    transcript, context: context
                 ) { stage in
                     Task { @MainActor in
                         self.processing.summarizing[sessionId] = stage
@@ -218,20 +151,24 @@ extension Store {
         processing.tasks[sessionId] = task
     }
 
-    /// User-facing message for a failed summary pass, with recourse.
+    /// User-facing message for a failed summary pass, with recourse. The
+    /// fallback is always the same: export the transcript and summarize it
+    /// with any AI assistant — a core design path, not a consolation prize.
     static func summarizeErrorMessage(_ error: Error) -> String {
         switch error as? SummaryBackendError {
         case .declined:
             return "Apple Intelligence declined to summarize this conversation. "
-                + "You can try again, or switch engines in My Voice."
+                + "You can try again, or export the transcript and summarize it "
+                + "with another AI assistant."
         case .unavailable(.notEnabled):
-            return "Apple Intelligence is turned off. Turn it on in Settings, "
-                + "or switch engines in My Voice."
+            return "Apple Intelligence is turned off. Turn it on in "
+                + "Settings → Apple Intelligence & Siri, then try again."
         case .unavailable(.modelNotReady):
             return "Apple Intelligence is still preparing its model. Try again shortly."
         case .unavailable:
-            return "Apple Intelligence isn't available on this device. "
-                + "Switch engines in My Voice."
+            return "Summaries require Apple Intelligence, which isn't available "
+                + "on this device. Export the transcript to summarize it with "
+                + "another AI assistant."
         case .noModelDirectory, nil:
             return "Summarization failed: \(error.localizedDescription)"
         }
