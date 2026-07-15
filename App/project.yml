@@ -21,6 +21,7 @@ targets:
       - Sources
       - Shared
       - Assets.xcassets
+      - Resources
     dependencies:
       - package: Luxicon
         product: LuxiconKit
