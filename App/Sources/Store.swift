@@ -88,8 +88,10 @@ final class Store {
     var myVoiceEmbedding: [Float]?
     /// User-defined terms (jargon, project names) to ground transcription in.
     var vocabularyEntries: [VocabularyEntry] = []
-    /// Which ASR engine transcribes turns.
-    var asrEngine: ASREngine = .parakeet
+    /// Explicit engine choice from settings; nil means automatic
+    /// (Apple's system transcriber on iOS 26+, else Parakeet).
+    var asrEngineChoice: ASREngine?
+    var asrEngine: ASREngine { asrEngineChoice ?? .resolvedDefault() }
     /// Master switch for the AI features (summaries, list labels, personal
     /// context). Off by default: enabling requires an explicit opt-in that
     /// downloads the ~2.5 GB on-device model. When off, the summary and
@@ -155,7 +157,11 @@ final class Store {
         /// Pre-0.1.0(4) plain-string vocabulary; migrated to `vocabularyEntries`.
         var customVocabulary: [String]?
         var vocabularyEntries: [VocabularyEntry]?
+        /// Legacy engine field: ignored on read, never written. Post-Qwen3
+        /// retirement it can only decode to .parakeet, and a default was
+        /// never distinguishable from a choice under this key anyway.
         var asrEngine: ASREngine?
+        var asrEngineChoice: ASREngine?
         var vocabularySourceURL: String?
         var vocabularyHeaders: [HTTPHeader]?
         var vocabularyLastSync: Date?
@@ -238,7 +244,7 @@ final class Store {
         myVoiceEmbedding = persisted.myVoiceEmbedding
         vocabularyEntries = persisted.vocabularyEntries
             ?? (persisted.customVocabulary ?? []).map { VocabularyEntry(term: $0) }
-        asrEngine = persisted.asrEngine ?? .parakeet
+        asrEngineChoice = persisted.asrEngineChoice
         vocabularySourceURL = persisted.vocabularySourceURL ?? ""
         vocabularyLastSync = persisted.vocabularyLastSync
         // Existing users (builds 1-9) had always-on summarization via the old
@@ -280,7 +286,8 @@ final class Store {
             myContext: myContext.isEmpty ? nil : myContext,
             myVoiceEmbedding: myVoiceEmbedding,
             customVocabulary: nil, vocabularyEntries: vocabularyEntries,
-            asrEngine: asrEngine,
+            asrEngine: nil,                    // legacy key: read-only (see Persisted)
+            asrEngineChoice: asrEngineChoice,
             vocabularySourceURL: vocabularySourceURL.isEmpty ? nil : vocabularySourceURL,
             vocabularyHeaders: nil,  // Keychain-only since build 6
             vocabularyLastSync: vocabularyLastSync,
