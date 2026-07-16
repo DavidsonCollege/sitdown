@@ -139,6 +139,21 @@ record.
 
 ## TestFlight — What to Test (per-build notes, 4000 chars max)
 
+### Build 16
+
+New since build 15 — visible errors when voice enrollment can't start:
+
+(1) If the enroll button fails (most commonly microphone access), the
+error now appears right under the button on My Voice, instead of at the
+very bottom of the screen where it was easy to miss.
+(2) When microphone access is denied, an alert now explains and offers
+Open Settings. To test: Settings → Apps → Luxicon → turn Microphone off,
+then tap Record Enrollment — you should get the alert, and Open Settings
+should land on Luxicon's settings page.
+(3) A fresh install should still show the normal microphone permission
+prompt on the first enroll tap; granting it should start the recording UI
+immediately.
+
 ### Build 15
 
 New since build 14 — a welcome tour:

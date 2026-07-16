@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 import LuxiconKit
 
 /// Enroll the user's own voice so their turns are auto-labeled in every transcript.
@@ -10,7 +11,9 @@ struct MyVoiceView: View {
     @State private var isRecording = false
     @State private var isEmbedding = false
     @State private var errorMessage: String?
+    @State private var showingMicDeniedAlert = false
     @State private var showingAboutGiving = false
+    @Environment(\.openURL) private var openURL
 
     private static let minSeconds: Double = 8
 
@@ -84,6 +87,9 @@ struct MyVoiceView: View {
                     Button(store.myVoiceEmbedding == nil ? "Record Enrollment" : "Re-record Enrollment") {
                         startEnrollment()
                     }
+                }
+                if let errorMessage {
+                    Text(errorMessage).foregroundStyle(.red).font(.footnote)
                 }
             } header: {
                 Text("Voice enrollment")
@@ -200,13 +206,20 @@ struct MyVoiceView: View {
                 Text("Luxicon is a free, open-source service of Davidson College.")
             }
 
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.footnote)
-            }
         }
         .navigationTitle("My Voice")
         .sheet(isPresented: $showingAboutGiving) {
             AboutGivingView()
+        }
+        .alert("Microphone Access Is Off", isPresented: $showingMicDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("Luxicon can't hear you until microphone access is turned on in Settings.")
         }
         .onDisappear {
             if isRecording { _ = recorder.stop() }
@@ -308,6 +321,7 @@ struct MyVoiceView: View {
             let granted = await AVAudioApplication.requestRecordPermission()
             guard granted else {
                 errorMessage = RecorderError.microphoneAccessDenied.errorDescription
+                showingMicDeniedAlert = true
                 return
             }
             do {
